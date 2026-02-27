@@ -30,17 +30,35 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
                       // For demo: just pick first image as placeholder
                       setState(() => selectedImage = images[0]);
                     },
-                    icon: const Icon(Icons.file_upload),
+                    icon: const Icon(Icons.save_alt),
                     label: const Text('Import Image'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.green.shade700,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 24, vertical: 12),
+                        horizontal: 24,
+                        vertical: 12,
+                      ),
                     ),
                   ),
 
                   const SizedBox(height: 20),
+
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      if (selectedImage != null) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Exported to .tif')),
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.file_upload),
+                    label: const Text('Export to .tif'),
+                      style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green.shade700,
+                      foregroundColor: Colors.white,
+                      ),
+                  ),
 
                   // Image list table
                   Expanded(
@@ -61,7 +79,9 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
                                   DataCell(
                                     Text(
                                       img,
-                                      style: const TextStyle(color: Colors.white),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                      ),
                                     ),
                                     onTap: () =>
                                         setState(() => selectedImage = img),
@@ -118,8 +138,10 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.green.shade700,
                   foregroundColor: Colors.white,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
                 ),
               ),
             ),
