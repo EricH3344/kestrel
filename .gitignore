@@ -1,0 +1,97 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Conda
+.conda/
+conda-meta/
+envs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# Images and data files
+*.tif
+*.tiff
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+aligned_rgb.png
+rgb.png
+cir.png
+ndvi_over_rgb.png
+ndre_over_rgb.png
+thermal_over_rgb.png
+*.tiff
+
+# Output files
+*.csv
+*.xlsx
+*.xls
+output/
+results/
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+*.lnk
+.AppleDouble
+.LSOverride
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environment variable files
+.env
+.env.local
+
+# Misc
+*.log
+.cache/
