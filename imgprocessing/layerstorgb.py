@@ -1,4 +1,5 @@
 
+#need to install exiftool to use the micasense python library. Download from https://exiftool.org/ and add to PATH. 
 import os
 import glob
 import cv2
