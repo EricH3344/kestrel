@@ -36,7 +36,7 @@ def align_layers_to_rgb(capture_prefix, output_filename="aligned_rgb.png", repo_
             warp_matrices, 
             warp_mode=warp_mode
         )
-        img_type = "radiance"
+        img_type = "reflectance" if cap.images[0].has_reflectance() else "radiance"
         im_aligned = imageutils.aligned_capture(
             cap,
             warp_matrices,

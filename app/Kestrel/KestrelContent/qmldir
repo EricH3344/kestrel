@@ -1,0 +1,5 @@
+module KestrelContent
+Database 1.0 Database.ui.qml
+Flight_Logs 1.0 Flight_Logs.ui.qml
+MapScreen 1.0 MapScreen.ui.qml
+Reports 1.0 Reports.ui.qml
