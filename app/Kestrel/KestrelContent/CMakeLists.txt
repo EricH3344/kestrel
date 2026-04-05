@@ -10,6 +10,7 @@ qt6_add_qml_module(KestrelContent
     RESOURCE_PREFIX "/qt/qml"
     QML_FILES
         "App.qml"
+        "ViewHeader.qml"
         "Screen01.ui.qml"
         "Database.ui.qml"
         "Flight_Logs.ui.qml"
