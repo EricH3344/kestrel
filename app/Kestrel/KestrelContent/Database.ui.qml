@@ -4,9 +4,7 @@ import QtQuick.Shapes
 Rectangle {
     id: database
 
-    height: 1024
-    width: 1440
-
+    anchors.fill: parent
     clip: true
     color: "#ffffff"
 

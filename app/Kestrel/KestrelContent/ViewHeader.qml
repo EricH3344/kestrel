@@ -5,15 +5,16 @@ import QtQuick.Layouts
 Column {
     id: viewHeader
     
-    width: 1440
+    anchors.left: parent.left
+    anchors.right: parent.right
     spacing: 0
 
     Item {
         id: topBar
 
         height: 70
-        width: 1440
-
+        anchors.left: parent.left
+        anchors.right: parent.right
         clip: true
 
         Rectangle {
@@ -22,8 +23,8 @@ Column {
             y: 69
 
             height: 1
-            width: 1440
-
+            anchors.left: parent.left
+            anchors.right: parent.right
             border.color: "#000000"
             border.width: 1
             color: "transparent"
@@ -33,8 +34,8 @@ Column {
                 id: rule_4
 
                 height: 1
-                width: 1440
-
+                anchors.left: parent.left
+                anchors.right: parent.right
                 color: "#b3b3b3"
             }
         }
@@ -80,8 +81,8 @@ Column {
             id: frame_2
 
             height: 32
-            width: 1440
-
+            anchors.left: parent.left
+            anchors.right: parent.right
             color: "#f2f2f7"
             anchors.top: parent.top
 
@@ -322,8 +323,8 @@ Column {
         y: 0
 
         height: 33
-        width: 1440
-
+        anchors.left: parent.left
+        anchors.right: parent.right
         clip: true
 
         Item {
@@ -603,7 +604,8 @@ Column {
             y: 32
 
             height: 1
-            width: 1440
+            anchors.left: parent.left
+            anchors.right: parent.right
 
             border.color: "#000000"
             border.width: 1
@@ -614,7 +616,8 @@ Column {
                 id: rule_3
 
                 height: 1
-                width: 1440
+                anchors.left: parent.left
+                anchors.right: parent.right
 
                 color: "#b3b3b3"
             }

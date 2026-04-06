@@ -4,23 +4,24 @@ import QtQuick.Shapes
 Rectangle {
     id: map
 
-    height: 1024
-    width: 1440
-
+    anchors.fill: parent
     clip: true
     color: "#ffffff"
 
     ViewHeader {
-        y: 0
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
     }
 
     Rectangle {
         id: rightSide
 
-        x: 1140
-        y: 102
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.topMargin: 103
+        anchors.bottom: bottomBar.top
 
-        height: 857
         width: 300
 
         border.color: "#b2b2b2"
@@ -96,7 +97,9 @@ Rectangle {
             y: 452
 
             height: 1
-            width: 298
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.leftMargin: 1
 
             border.color: "#000000"
             border.width: 1
@@ -107,7 +110,9 @@ Rectangle {
                 id: rule
 
                 height: 1
-                width: 298
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.leftMargin: 1
 
                 color: "#b3b3b3"
             }
@@ -268,10 +273,10 @@ Senescence Rate:"
     Rectangle {
         id: middleSection
 
-        y: 135
-
-        height: 858
-        width: 1141
+        anchors.left: frame_8.right
+        anchors.right: rightSide.left
+        anchors.top: toolbar.bottom
+        anchors.bottom: bottomBar.top
 
         border.color: "#b2b2b2"
         border.width: 1
@@ -281,10 +286,10 @@ Senescence Rate:"
     Rectangle {
         id: frame_8
 
-        x: 1
-        y: 136
+        anchors.left: parent.left
+        anchors.top: toolbar.bottom
+        anchors.bottom: bottomBar.top
 
-        height: 856
         width: 298
 
         border.color: "#b2b2b2"
@@ -525,10 +530,13 @@ Senescence Rate:"
             Rectangle {
                 id: menu_Separator_1
 
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.leftMargin: 1
+
                 y: 52
 
                 height: 1
-                width: 298
 
                 border.color: "#000000"
                 border.width: 1
@@ -539,7 +547,9 @@ Senescence Rate:"
                     id: rule_1
 
                     height: 1
-                    width: 298
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.leftMargin: 1
 
                     color: "#b3b3b3"
                 }
@@ -547,10 +557,13 @@ Senescence Rate:"
             Rectangle {
                 id: menu_Separator_2
 
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.leftMargin: 1
+
                 y: 400
 
                 height: 1
-                width: 298
 
                 border.color: "#000000"
                 border.width: 1
@@ -561,7 +574,9 @@ Senescence Rate:"
                     id: rule_2
 
                     height: 1
-                    width: 298
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.leftMargin: 1
 
                     color: "#b3b3b3"
                 }
@@ -626,11 +641,12 @@ Senescence Rate:"
     Item {
         id: toolbar
 
-        y: 103
+        anchors.top: parent.top
+        anchors.topMargin: 103
+        anchors.left: parent.left
+        anchors.right: rightSide.left
 
         height: 33
-        width: 1440
-
         clip: true
 
         Item {
@@ -1221,10 +1237,11 @@ Senescence Rate:"
     Rectangle {
         id: bottomBar
 
-        y: 992
+        anchors.bottom: parent.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
 
         height: 32
-        width: 1440
 
         border.color: "#898989"
         border.width: 1
@@ -1234,16 +1251,16 @@ Senescence Rate:"
         Rectangle {
             id: frame_1
 
-            height: 32
-            width: 1440
+            anchors.fill: parent
 
             color: "#f2f2f7"
         }
         Item {
             id: fields
 
-            x: 776
-            y: -1
+            anchors.right: parent.right
+            anchors.rightMargin: 30
+            anchors.verticalCenter: parent.verticalCenter
 
             height: 35
             width: 630
