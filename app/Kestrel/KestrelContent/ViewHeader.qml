@@ -6,17 +6,31 @@ Column {
     id: viewHeader
 
     property int currentScreen: 2
+    property list<QtObject> projectsList: [
+        QtObject { property string projectName: "Image_001"; property bool isActive: true },
+        QtObject { property string projectName: "Image_002"; property bool isActive: false },
+        QtObject { property string projectName: "Image_003"; property bool isActive: false }
+    ]
+    property var appWindow: null
 
     anchors.left: parent.left
     anchors.right: parent.right
     spacing: 0
-
-    Connections {
-        target: (typeof appModel !== 'undefined') ? appModel : null
-        enabled: target !== null
-        function onCurrentScreenChanged() {
-            currentScreen = appModel.currentScreen
-        }
+    
+    // Sync currentScreen with app's currentScreen
+    Binding {
+        target: viewHeader
+        property: "currentScreen"
+        value: viewHeader.appWindow && typeof viewHeader.appWindow.currentScreen !== 'undefined' ? viewHeader.appWindow.currentScreen : 2
+        when: viewHeader.appWindow !== null
+    }
+    
+    // Sync projectsList with app's openProjects
+    Binding {
+        target: viewHeader
+        property: "projectsList"
+        value: viewHeader.appWindow && viewHeader.appWindow.openProjects !== undefined ? viewHeader.appWindow.openProjects : viewHeader.projectsList
+        when: viewHeader.appWindow !== null && viewHeader.appWindow.openProjects !== undefined
     }
 
     Item {
@@ -101,7 +115,7 @@ Column {
                 y: 0
                 width: 58
                 height: 38
-                onClicked: appModel.showMap()
+                onClicked: if (viewHeader.appWindow) viewHeader.appWindow.showMap()
             }
 
             Text {
@@ -126,7 +140,7 @@ Column {
                 y: 0
                 width: 95
                 height: 38
-                onClicked: appModel.showDatabase()
+                onClicked: if (viewHeader.appWindow) viewHeader.appWindow.showDatabase()
             }
 
             Text {
@@ -151,7 +165,7 @@ Column {
                 y: 0
                 width: 108
                 height: 38
-                onClicked: appModel.showFlightLogs()
+                onClicked: if (viewHeader.appWindow) viewHeader.appWindow.showFlightLogs()
             }
 
             Text {
@@ -176,7 +190,7 @@ Column {
                 y: 0
                 width: 108
                 height: 38
-                onClicked: appModel.showReports()
+                onClicked: if (viewHeader.appWindow) viewHeader.appWindow.showReports()
             }
 
             Rectangle {
@@ -187,17 +201,35 @@ Column {
                 x: tabs.targetX
                 width: tabs.targetWidth
 
-                Behavior on x {
-                    NumberAnimation {
-                        duration: tabs.animationDuration
-                        easing.type: Easing.InOutQuad
-                    }
+                PropertyAnimation {
+                    id: xAnimation
+                    target: selectedViewStroke
+                    property: "x"
+                    duration: 300
+                    easing.type: Easing.InOutQuad
                 }
-
-                Behavior on width {
-                    NumberAnimation {
-                        duration: tabs.animationDuration
-                        easing.type: Easing.InOutQuad
+                
+                PropertyAnimation {
+                    id: widthAnimation
+                    target: selectedViewStroke
+                    property: "width"
+                    duration: 300
+                    easing.type: Easing.InOutQuad
+                }
+                
+                Connections {
+                    target: tabs
+                    function onTargetXChanged() {
+                        xAnimation.stop();
+                        xAnimation.from = selectedViewStroke.x;
+                        xAnimation.to = tabs.targetX;
+                        xAnimation.start();
+                    }
+                    function onTargetWidthChanged() {
+                        widthAnimation.stop();
+                        widthAnimation.from = selectedViewStroke.width;
+                        widthAnimation.to = tabs.targetWidth;
+                        widthAnimation.start();
                     }
                 }
             }
@@ -455,273 +487,259 @@ Column {
             id: frame_4
 
             height: 33
-            width: 636
+            anchors.left: parent.left
+            anchors.right: parent.right
 
-            Rectangle {
-                id: rectangle_1
-
-                height: 33
-                width: 200
-
-                border.color: "#b3b3b3"
-                border.width: 1
-                color: "transparent"
-
-                Rectangle {
-                    id: rectangle_2
-
-                    height: 33
-                    width: 200
-
-                    color: "#ffffff"
-                }
-                Text {
-                    id: image_001
-
-                    height: 33
-                    width: 201
-
-                    color: "#000000"
-                    font.family: "Inter"
-                    font.pixelSize: 16
-                    font.weight: Font.Normal
-                    horizontalAlignment: Text.AlignHCenter
-                    lineHeight: 22.40
-                    lineHeightMode: Text.FixedHeight
-                    text: "Image_001"
-                    textFormat: Text.PlainText
-                    verticalAlignment: Text.AlignVCenter
-                }
-                Item {
-                    id: close_2
-
-                    x: 164
-                    y: 6
-
-                    height: 20
-                    width: 20
-
-                    clip: true
-
-                    Shape {
-                        id: icon_3
-
-                        x: 4.17
-                        y: 4.17
-
-                        height: 11.67
-                        width: 11.67
-
-                        ShapePath {
-                            id: icon_3_ShapePath0
-
-                            fillColor: "#1d1b20"
-                            fillRule: ShapePath.WindingFill
-                            joinStyle: ShapePath.MiterJoin
-                            strokeColor: "#00000000"
-                            strokeStyle: ShapePath.SolidLine
-                            strokeWidth: 0.03
-
-                            PathSvg {
-                                id: icon_3_ShapePath0_PathSvg0
-
-                                path: "M 1.1666666785875952 11.666666984558105 L 0 10.500000603993742 L 4.666666714350381 5.833333492279053 L 0 1.1666666785875952 L 1.1666666785875952 0 L 5.833333492279053 4.666666714350381 L 10.500000603993742 0 L 11.666666984558105 1.1666666785875952 L 7.000000667572035 5.833333492279053 L 11.666666984558105 10.500000603993742 L 10.500000603993742 11.666666984558105 L 5.833333492279053 7.000000667572035 L 1.1666666785875952 11.666666984558105 Z"
-                            }
-                        }
-                    }
+            function addNewProject() {
+                // Store current scroll position before adding
+                projectsFlickable.savedScrollX = projectsFlickable.contentX;
+                
+                var newProject = Qt.createQmlObject(
+                    'import QtQml; QtObject { property string projectName: "Image_' + String(viewHeader.projectsList.length + 1).padStart(3, "0") + '"; property bool isActive: false }',
+                    frame_4
+                );
+                var updatedProjects = viewHeader.projectsList.slice();
+                updatedProjects.push(newProject);
+                
+                // Update local list
+                viewHeader.projectsList = updatedProjects;
+                
+                // Update app window's openProjects if available
+                if (viewHeader.appWindow && typeof viewHeader.appWindow.openProjects !== 'undefined') {
+                    viewHeader.appWindow.openProjects = updatedProjects;
                 }
             }
-            Rectangle {
-                id: rectangle_3
 
-                x: 201
-
-                height: 33
-                width: 200
-
-                border.color: "#b3b3b3"
-                border.width: 1
-                color: "transparent"
-
-                Rectangle {
-                    id: rectangle_4
-
-                    height: 33
-                    width: 200
-
-                    color: "#ffffff"
-                }
-                Text {
-                    id: image_002
-
-                    height: 33
-                    width: 201
-
-                    color: "#000000"
-                    font.family: "Inter"
-                    font.pixelSize: 16
-                    font.weight: Font.Normal
-                    horizontalAlignment: Text.AlignHCenter
-                    lineHeight: 22.40
-                    lineHeightMode: Text.FixedHeight
-                    text: "Image_002"
-                    textFormat: Text.PlainText
-                    verticalAlignment: Text.AlignVCenter
-                }
-                Item {
-                    id: close_3
-
-                    x: 164
-                    y: 6
-
-                    height: 20
-                    width: 20
-
-                    clip: true
-
-                    Shape {
-                        id: icon_4
-
-                        x: 4.17
-                        y: 4.17
-
-                        height: 11.67
-                        width: 11.67
-
-                        ShapePath {
-                            id: icon_4_ShapePath0
-
-                            fillColor: "#1d1b20"
-                            fillRule: ShapePath.WindingFill
-                            joinStyle: ShapePath.MiterJoin
-                            strokeColor: "#00000000"
-                            strokeStyle: ShapePath.SolidLine
-                            strokeWidth: 0.03
-
-                            PathSvg {
-                                id: icon_4_ShapePath0_PathSvg0
-
-                                path: "M 1.1666666785875952 11.666666984558105 L 0 10.500000603993742 L 4.666666714350381 5.833333492279053 L 0 1.1666666785875952 L 1.1666666785875952 0 L 5.833333492279053 4.666666714350381 L 10.500000603993742 0 L 11.666666984558105 1.1666666785875952 L 7.000000667572035 5.833333492279053 L 11.666666984558105 10.500000603993742 L 10.500000603993742 11.666666984558105 L 5.833333492279053 7.000000667572035 L 1.1666666785875952 11.666666984558105 Z"
-                            }
-                        }
-                    }
-                }
+            function scrollRight() {
+                // Calculate current number of visible cards and scroll by that amount
+                var cardEffectiveWidth = 199;  // 200 - 1 spacing
+                var visibleCards = Math.floor(projectsFlickable.width / cardEffectiveWidth);
+                var newContentX = projectsFlickable.contentX + (visibleCards * cardEffectiveWidth);
+                projectsFlickable.contentX = newContentX;
             }
-            Rectangle {
-                id: rectangle_5
 
-                x: 402
-
-                height: 33
-                width: 200
-
-                border.color: "#b3b3b3"
-                border.width: 1
-                color: "transparent"
-
-                Rectangle {
-                    id: rectangle_6
-
-                    height: 33
-                    width: 200
-
-                    color: "#f2f2f7"
-                }
-                Text {
-                    id: image_003
-
-                    height: 33
-                    width: 201
-
-                    color: "#000000"
-                    font.family: "Inter"
-                    font.pixelSize: 16
-                    font.weight: Font.Normal
-                    horizontalAlignment: Text.AlignHCenter
-                    lineHeight: 22.40
-                    lineHeightMode: Text.FixedHeight
-                    text: "Image_003"
-                    textFormat: Text.PlainText
-                    verticalAlignment: Text.AlignVCenter
-                }
-                Item {
-                    id: close_4
-
-                    x: 164
-                    y: 6
-
-                    height: 20
-                    width: 20
-
-                    clip: true
-
-                    Shape {
-                        id: icon_5
-
-                        x: 4.17
-                        y: 4.17
-
-                        height: 11.67
-                        width: 11.67
-
-                        ShapePath {
-                            id: icon_5_ShapePath0
-
-                            fillColor: "#1d1b20"
-                            fillRule: ShapePath.WindingFill
-                            joinStyle: ShapePath.MiterJoin
-                            strokeColor: "#00000000"
-                            strokeStyle: ShapePath.SolidLine
-                            strokeWidth: 0.03
-
-                            PathSvg {
-                                id: icon_5_ShapePath0_PathSvg0
-
-                                path: "M 1.1666666785875952 11.666666984558105 L 0 10.500000603993742 L 4.666666714350381 5.833333492279053 L 0 1.1666666785875952 L 1.1666666785875952 0 L 5.833333492279053 4.666666714350381 L 10.500000603993742 0 L 11.666666984558105 1.1666666785875952 L 7.000000667572035 5.833333492279053 L 11.666666984558105 10.500000603993742 L 10.500000603993742 11.666666984558105 L 5.833333492279053 7.000000667572035 L 1.1666666785875952 11.666666984558105 Z"
-                            }
-                        }
-                    }
-                }
+            function scrollLeft() {
+                // Calculate current number of visible cards and scroll by that amount
+                var cardEffectiveWidth = 199;  // 200 - 1 spacing
+                var visibleCards = Math.floor(projectsFlickable.width / cardEffectiveWidth);
+                var newContentX = projectsFlickable.contentX - (visibleCards * cardEffectiveWidth);
+                projectsFlickable.contentX = newContentX;
             }
+
+            // Left arrow button (overlays on cards)
             Rectangle {
-                id: add
-
-                x: 603
-
+                id: leftArrow
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
                 height: 33
-                width: 33
-
-                clip: true
+                width: projectsFlickable.contentX > 0 ? 33 : 0
                 color: "#ffffff"
-
+                border.color: "#b3b3b3"
+                border.width: 1
+                clip: true
+                z: 10
+                
                 Shape {
-                    id: icon_6
-
-                    x: 6.88
-                    y: 6.88
-
-                    height: 19.25
-                    width: 19.25
-
+                    anchors.centerIn: parent
+                    height: 16
+                    width: 10
+                    
                     ShapePath {
-                        id: icon_6_ShapePath0
-
-                        fillColor: "#1d1b20"
+                        fillColor: "#323232"
                         fillRule: ShapePath.WindingFill
                         joinStyle: ShapePath.MiterJoin
                         strokeColor: "#00000000"
                         strokeStyle: ShapePath.SolidLine
-                        strokeWidth: 0.03
-
+                        strokeWidth: 0
+                        
                         PathSvg {
-                            id: icon_6_ShapePath0_PathSvg0
+                            path: "M 10 0 L 0 8 L 10 16 L 10 0 Z"
+                        }
+                    }
+                }
+                
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: frame_4.scrollLeft()
+                }
+            }
 
-                            path: "M 8.25 11 L 0 11 L 0 8.25 L 8.25 8.25 L 8.25 0 L 11 0 L 11 8.25 L 19.25 8.25 L 19.25 11 L 11 11 L 11 19.25 L 8.25 19.25 L 8.25 11 Z"
+            // Right arrow button (overlays on cards)
+            Rectangle {
+                id: rightArrow
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                height: 33
+                width: projectsFlickable.contentX < (projectsFlickable.contentWidth - projectsFlickable.width) ? 33 : 0
+                color: "#ffffff"
+                border.color: "#b3b3b3"
+                border.width: 1
+                clip: true
+                z: 10
+                
+                Shape {
+                    anchors.centerIn: parent
+                    height: 16
+                    width: 10
+                    
+                    ShapePath {
+                        fillColor: "#323232"
+                        fillRule: ShapePath.WindingFill
+                        joinStyle: ShapePath.MiterJoin
+                        strokeColor: "#00000000"
+                        strokeStyle: ShapePath.SolidLine
+                        strokeWidth: 0
+                        
+                        PathSvg {
+                            path: "M 0 0 L 10 8 L 0 16 L 0 0 Z"
+                        }
+                    }
+                }
+                
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: frame_4.scrollRight()
+                }
+            }
+
+            Flickable {
+                id: projectsFlickable
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                
+                property real savedScrollX: 0
+                
+                contentWidth: projectCardsRow.width
+                contentHeight: 33
+                flickableDirection: Flickable.HorizontalFlick
+                
+                Row {
+                    id: projectCardsRow
+                    height: 33
+                    spacing: -1
+                    
+                    onWidthChanged: {
+                        // Restore saved scroll position when row is recalculated after adding a card
+                        if (projectsFlickable.savedScrollX !== undefined && projectsFlickable.savedScrollX !== null) {
+                            projectsFlickable.contentX = projectsFlickable.savedScrollX;
+                            projectsFlickable.savedScrollX = null;
+                        }
+                    }
+
+                    Repeater {
+                        model: viewHeader.projectsList
+                        
+                        Rectangle {
+                            id: projectCard
+                            
+                            height: 33
+                            width: 200
+                            
+                            border.color: "#b3b3b3"
+                            border.width: 1
+                            color: "transparent"
+                            
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.margins: 1
+                                color: modelData.isActive ? "#f2f2f7" : "#ffffff"
+                            }
+                            
+                            Text {
+                                anchors.centerIn: parent
+                                height: 33
+                                width: 201
+                                
+                                color: "#000000"
+                                font.family: "Inter"
+                                font.pixelSize: 16
+                                font.weight: Font.Normal
+                                horizontalAlignment: Text.AlignHCenter
+                                lineHeight: 22.40
+                                lineHeightMode: Text.FixedHeight
+                                text: modelData.projectName
+                                textFormat: Text.PlainText
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            
+                            Item {
+                                x: 164
+                                y: 6
+                                height: 20
+                                width: 20
+                                clip: true
+                                
+                                Shape {
+                                    x: 4.17
+                                    y: 4.17
+                                    height: 11.67
+                                    width: 11.67
+                                    
+                                    ShapePath {
+                                        fillColor: "#1d1b20"
+                                        fillRule: ShapePath.WindingFill
+                                        joinStyle: ShapePath.MiterJoin
+                                        strokeColor: "#00000000"
+                                        strokeStyle: ShapePath.SolidLine
+                                        strokeWidth: 0.03
+                                        
+                                        PathSvg {
+                                            path: "M 1.1666666785875952 11.666666984558105 L 0 10.500000603993742 L 4.666666714350381 5.833333492279053 L 0 1.1666666785875952 L 1.1666666785875952 0 L 5.833333492279053 4.666666714350381 L 10.500000603993742 0 L 11.666666984558105 1.1666666785875952 L 7.000000667572035 5.833333492279053 L 11.666666984558105 10.500000603993742 L 10.500000603993742 11.666666984558105 L 5.833333492279053 7.000000667572035 L 1.1666666785875952 11.666666984558105 Z"
+                                        }
+                                    }
+                                }
+                                
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onClicked: {
+                                        // Close/remove project logic here
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Add button inside the row (flows with cards)
+                    Rectangle {
+                        id: add
+                        height: 33
+                        width: 33
+                        
+                        color: "#ffffff"
+                        border.color: "#b3b3b3"
+                        border.width: 1
+                        clip: true
+                        
+                        Shape {
+                            anchors.centerIn: parent
+                            height: 16
+                            width: 16
+                            
+                            ShapePath {
+                                fillColor: "#323232"
+                                fillRule: ShapePath.WindingFill
+                                joinStyle: ShapePath.MiterJoin
+                                strokeColor: "#00000000"
+                                strokeStyle: ShapePath.SolidLine
+                                strokeWidth: 0
+                                
+                                PathSvg {
+                                    path: "M 8 0 C 8.44183 0 8.8 0.358172 8.8 0.8 L 8.8 7.2 L 15.2 7.2 C 15.6418 7.2 16 7.55817 16 8 C 16 8.44183 15.6418 8.8 15.2 8.8 L 8.8 8.8 L 8.8 15.2 C 8.8 15.6418 8.44183 16 8 16 C 7.55817 16 7.2 15.6418 7.2 15.2 L 7.2 8.8 L 0.8 8.8 C 0.358172 8.8 0 8.44183 0 8 C 0 7.55817 0.358172 7.2 0.8 7.2 L 7.2 7.2 L 7.2 0.8 C 7.2 0.358172 7.55817 0 8 0 Z"
+                                }
+                            }
+                        }
+                        
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: frame_4.addNewProject()
                         }
                     }
                 }
             }
         }
+        
         Rectangle {
             id: menu_Separator_3
 

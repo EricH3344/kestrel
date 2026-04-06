@@ -8,15 +8,10 @@ Rectangle {
     clip: true
     color: "#ffffff"
 
-    ViewHeader { 
-        y: 0
-    }
-
     Rectangle {
         id: middleSection
 
         x: 332
-        y: 102
 
         height: 891
         width: 1108
@@ -28,8 +23,6 @@ Rectangle {
     }
     Rectangle {
         id: sideBar
-
-        y: 102
 
         height: 891
         width: 333

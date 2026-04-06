@@ -8,14 +8,8 @@ Rectangle {
     clip: true
     color: "#ffffff"
 
-    ViewHeader {
-        y: 0
-    }
-
     Rectangle {
         id: middleSection
-
-        y: 140
 
         height: 852
 
@@ -199,8 +193,6 @@ Rectangle {
     }
     Item {
         id: frame_13
-
-        y: 101
 
         height: 40
         anchors.left: parent.left

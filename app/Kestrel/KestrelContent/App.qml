@@ -13,6 +13,11 @@ Window {
 
     property int currentScreen: 2
     property string currentScreenPath: "MapScreen.ui.qml"
+    property list<QtObject> openProjects: [
+        QtObject { property string projectName: "Image_001"; property bool isActive: true },
+        QtObject { property string projectName: "Image_002"; property bool isActive: false },
+        QtObject { property string projectName: "Image_003"; property bool isActive: false }
+    ]
 
     // Window dragging support
     DragHandler {
@@ -24,9 +29,21 @@ Window {
         }
     }
 
+    // ViewHeader - persistent across all views
+    ViewHeader {
+        id: viewHeader
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        appWindow: appWindow
+    }
+
     Loader {
         id: screenLoader
-        anchors.fill: parent
+        anchors.top: viewHeader.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
         source: currentScreenPath
     }
 

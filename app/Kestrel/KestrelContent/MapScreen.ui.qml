@@ -8,18 +8,11 @@ Rectangle {
     clip: true
     color: "#ffffff"
 
-    ViewHeader {
-        anchors.top: parent.top
-        anchors.left: parent.left
-        anchors.right: parent.right
-    }
-
     Rectangle {
         id: rightSide
 
         anchors.right: parent.right
         anchors.top: parent.top
-        anchors.topMargin: 103
         anchors.bottom: bottomBar.top
 
         width: 300
@@ -642,7 +635,6 @@ Senescence Rate:"
         id: toolbar
 
         anchors.top: parent.top
-        anchors.topMargin: 103
         anchors.left: parent.left
         anchors.right: rightSide.left
 
