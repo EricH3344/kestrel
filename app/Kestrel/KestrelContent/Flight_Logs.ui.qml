@@ -8,7 +8,9 @@ Rectangle {
     clip: true
     color: "#ffffff"
 
-    ViewHeader { y: 0 }
+    ViewHeader { 
+        y: 0
+    }
 
     Rectangle {
         id: middleSection

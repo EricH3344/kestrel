@@ -21,9 +21,13 @@ int main(int argc, char *argv[])
     const QUrl url(mainQmlFile);
     QObject::connect(
                 &engine, &QQmlApplicationEngine::objectCreated, &app,
-                [url](QObject *obj, const QUrl &objUrl) {
-        if (!obj && url == objUrl)
+                [url, &engine](QObject *obj, const QUrl &objUrl) {
+        if (!obj && url == objUrl) {
             QCoreApplication::exit(-1);
+        } else if (obj && url == objUrl) {
+            // Expose the App's currentScreen property to QML context
+            engine.rootContext()->setContextProperty("appModel", obj);
+        }
     }, Qt::QueuedConnection);
 
     engine.addImportPath(QCoreApplication::applicationDirPath() + "/qml");

@@ -4,10 +4,20 @@ import QtQuick.Layouts
 
 Column {
     id: viewHeader
-    
+
+    property int currentScreen: 2
+
     anchors.left: parent.left
     anchors.right: parent.right
     spacing: 0
+
+    Connections {
+        target: (typeof appModel !== 'undefined') ? appModel : null
+        enabled: target !== null
+        function onCurrentScreenChanged() {
+            currentScreen = appModel.currentScreen
+        }
+    }
 
     Item {
         id: topBar
@@ -48,33 +58,148 @@ Column {
             anchors.horizontalCenter: parent.horizontalCenter
             width: 440
 
-            Image {
-                id: tab
+            // Animation duration in milliseconds - adjust for different velocities
+            property int animationDuration: 300
 
-                x: 47.50
-
-                source: Qt.resolvedUrl("assets/tab_10.png")
+            // Computed target position and width based on currentScreen
+            property int targetX: {
+                switch(viewHeader.currentScreen) {
+                    case 0: return 105; // Database
+                    case 1: return 200; // Flight Logs
+                    case 3: return 308; // Reports
+                    default: return 47;  // Map
+                }
             }
-            Image {
-                id: tab_1
-
-                x: 104.50
-
-                source: Qt.resolvedUrl("assets/tab_11.png")
+            property int targetWidth: {
+                switch(viewHeader.currentScreen) {
+                    case 0: return 95;   // Database
+                    case 1: return 108;  // Flight Logs
+                    case 3: return 108;  // Reports
+                    default: return 58;  // Map
+                }
             }
-            Image {
-                id: tab_2
 
-                x: 200.50
-
-                source: Qt.resolvedUrl("assets/tab_12.png")
+            Text {
+                id: mapText
+                x: 47
+                y: 0
+                width: 58
+                height: 38
+                color: viewHeader.currentScreen === 2 ? "#303030" : "#767676"
+                text: "Map"
+                font.pixelSize: 16
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                lineHeight: 22.4
+                lineHeightMode: Text.FixedHeight
+                textFormat: Text.PlainText
+                font.weight: Font.Normal
+                font.family: "Inter"
             }
-            Image {
-                id: tab_3
+            MouseArea {
+                x: 47
+                y: 0
+                width: 58
+                height: 38
+                onClicked: appModel.showMap()
+            }
 
-                x: 308.50
+            Text {
+                id: dbText
+                x: 105
+                y: 0
+                width: 95
+                height: 38
+                color: viewHeader.currentScreen === 0 ? "#303030" : "#767676"
+                text: "Database"
+                font.pixelSize: 16
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                lineHeight: 22.4
+                lineHeightMode: Text.FixedHeight
+                textFormat: Text.PlainText
+                font.weight: Font.Normal
+                font.family: "Inter"
+            }
+            MouseArea {
+                x: 105
+                y: 0
+                width: 95
+                height: 38
+                onClicked: appModel.showDatabase()
+            }
 
-                source: Qt.resolvedUrl("assets/tab_13.png")
+            Text {
+                id: flText
+                x: 200
+                y: 0
+                width: 108
+                height: 38
+                color: viewHeader.currentScreen === 1 ? "#303030" : "#767676"
+                text: "Flight Logs"
+                font.pixelSize: 16
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                lineHeight: 22.4
+                lineHeightMode: Text.FixedHeight
+                textFormat: Text.PlainText
+                font.weight: Font.Normal
+                font.family: "Inter"
+            }
+            MouseArea {
+                x: 200
+                y: 0
+                width: 108
+                height: 38
+                onClicked: appModel.showFlightLogs()
+            }
+
+            Text {
+                id: reportsText
+                x: 308
+                y: 0
+                width: 108
+                height: 38
+                color: viewHeader.currentScreen === 3 ? "#303030" : "#767676"
+                text: "Reports"
+                font.pixelSize: 16
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                lineHeight: 22.4
+                lineHeightMode: Text.FixedHeight
+                textFormat: Text.PlainText
+                font.weight: Font.Normal
+                font.family: "Inter"
+            }
+            MouseArea {
+                x: 308
+                y: 0
+                width: 108
+                height: 38
+                onClicked: appModel.showReports()
+            }
+
+            Rectangle {
+                id: selectedViewStroke
+                y: 37
+                height: 1
+                color: "#303030"
+                x: tabs.targetX
+                width: tabs.targetWidth
+
+                Behavior on x {
+                    NumberAnimation {
+                        duration: tabs.animationDuration
+                        easing.type: Easing.InOutQuad
+                    }
+                }
+
+                Behavior on width {
+                    NumberAnimation {
+                        duration: tabs.animationDuration
+                        easing.type: Easing.InOutQuad
+                    }
+                }
             }
         }
         Rectangle {
@@ -170,7 +295,7 @@ Column {
                         horizontalAlignment: Text.AlignHCenter
                         lineHeight: 16
                         lineHeightMode: Text.FixedHeight
-                        text: ""
+                        text: windowController.maximized ? "\uE923" : "\uE922"
                         textFormat: Text.PlainText
                         verticalAlignment: Text.AlignVCenter
                     }
@@ -196,7 +321,6 @@ Column {
                         width: 46
 
                         color: mouseArea3.containsMouse ? "#c70039" : "#00ffffff"
-                        topRightRadius: 7
                     }
                     Text {
                         id: chromeClose
@@ -316,7 +440,7 @@ Column {
             }
         }
     }
-    
+
     Item {
         id: imageSelector
 
@@ -623,5 +747,5 @@ Column {
             }
         }
     }
-    
+
 }

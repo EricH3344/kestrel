@@ -8,32 +8,36 @@ Rectangle {
     clip: true
     color: "#ffffff"
 
-    ViewHeader { y: 0 }
+    ViewHeader {
+        y: 0
+    }
 
     Rectangle {
         id: middleSection
 
-        x: 299
-        y: 102
+        y: 140
 
         height: 852
-        width: 1141
 
         border.color: "#b2b2b2"
         border.width: 1
+        anchors.left: sideBar.right
+        anchors.top: frame_13.bottom
+        anchors.right: parent.right
+        anchors.bottom: bottomBar.top
         clip: true
         color: "transparent"
     }
     Rectangle {
         id: sideBar
 
-        y: 102
-
-        height: 852
         width: 300
 
         border.color: "#b3b3b3"
         border.width: 1
+        anchors.left: parent.left
+        anchors.top: frame_13.bottom
+        anchors.bottom: bottomBar.top
         color: "transparent"
 
         Rectangle {
@@ -172,13 +176,13 @@ Rectangle {
     Rectangle {
         id: bottomBar
 
-        y: 992
-
         height: 32
-        width: 1440
 
         border.color: "#898989"
         border.width: 1
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
         clip: true
         color: "transparent"
 
@@ -186,9 +190,11 @@ Rectangle {
             id: frame_1
 
             height: 32
-            width: 1440
 
             color: "#f2f2f7"
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
         }
     }
     Item {
@@ -197,14 +203,14 @@ Rectangle {
         y: 101
 
         height: 40
-        width: 1440
+        anchors.left: parent.left
+        anchors.right: parent.right
 
         Item {
             id: tabs
 
-            x: 642
-
             height: 40
+            anchors.horizontalCenter: parent.horizontalCenter
             width: 156
 
             Image {
@@ -223,5 +229,4 @@ Rectangle {
             }
         }
     }
-    
 }
