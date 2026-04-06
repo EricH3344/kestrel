@@ -47,6 +47,33 @@ Window {
         source: currentScreenPath
     }
 
+    // Overlay to block interaction when dialog is open
+    Rectangle {
+        id: dialogOverlay
+        anchors.fill: parent
+        color: "#00000000"
+        visible: false
+        z: 1000
+        
+        MouseArea {
+            anchors.fill: parent
+            enabled: dialogOverlay.visible
+            onClicked: {
+                if (appWindow.createProjectWindow) {
+                    // Play system alert sound
+                    systemAlert.playSound()
+                    // Restore if minimized
+                    if (appWindow.createProjectWindow.visibility === Window.Minimized) {
+                        appWindow.createProjectWindow.showNormal()
+                    }
+                    // Bring dialog to front
+                    appWindow.createProjectWindow.raise()
+                    appWindow.createProjectWindow.requestActivate()
+                }
+            }
+        }
+    }
+
     // Navigation functions
     function showDatabase() {
         currentScreenPath = "Database.ui.qml"
@@ -84,8 +111,30 @@ Window {
     function close() {
         appWindow.close()
     }
+    
+    function setDialogBlocking(blocking: bool) {
+        dialogOverlay.visible = blocking
+    }
 
-    // Initialize with MapScreen
+    property var createProjectWindow: null
+
+    function openCreateProjectDialog() {
+        if (createProjectWindow === null) {
+            let component = Qt.createComponent("CreateProjectWindow.qml")
+            if (component.status === Component.Ready) {
+                createProjectWindow = component.createObject(null, { parentAppWindow: appWindow })
+            } else {
+                console.error("Failed to load CreateProjectWindow:", component.errorString())
+                return
+            }
+        }
+        
+        setDialogBlocking(true)
+        createProjectWindow.visible = true
+        createProjectWindow.raise()
+        createProjectWindow.requestActivate()
+    }
+
     Component.onCompleted: {
         showMap()
     }

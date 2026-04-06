@@ -10,12 +10,14 @@ qt6_add_qml_module(KestrelContent
     RESOURCE_PREFIX "/qt/qml"
     QML_FILES
         "App.qml"
+        "Create_Project.ui.qml"
         "Database.ui.qml"
         "Flight_Logs.ui.qml"
         "MapScreen.ui.qml"
         "Reports.ui.qml"
         "Screen01.ui.qml"
         "ViewHeader.qml"
+        "CreateProjectWindow.qml"
     RESOURCES
         "assets/add.png"
         "assets/image_1.png"
@@ -23,6 +25,7 @@ qt6_add_qml_module(KestrelContent
         "assets/image_3.png"
         "assets/image_4.png"
         "assets/image_5.png"
+        "assets/image_6.png"
         "assets/imageSelector.png"
         "assets/menu_Separator.png"
         "assets/parts_Title_Bar_Caption_Control_Group.png"

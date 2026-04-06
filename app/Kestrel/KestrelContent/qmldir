@@ -1,4 +1,6 @@
 module KestrelContent
+Create_Project 1.0 Create_Project.ui.qml
+CreateProjectWindow 1.0 CreateProjectWindow.qml
 Database 1.0 Database.ui.qml
 Flight_Logs 1.0 Flight_Logs.ui.qml
 MapScreen 1.0 MapScreen.ui.qml

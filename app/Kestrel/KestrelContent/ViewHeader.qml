@@ -733,7 +733,7 @@ Column {
                         
                         MouseArea {
                             anchors.fill: parent
-                            onClicked: frame_4.addNewProject()
+                            onClicked: if (viewHeader.appWindow) viewHeader.appWindow.openCreateProjectDialog()
                         }
                     }
                 }

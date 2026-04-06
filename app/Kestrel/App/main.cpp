@@ -5,6 +5,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include "windowcontroller.h"
+#include "../src/SystemAlert.h"
 
 #include "autogen/environment.h"
 
@@ -17,6 +18,9 @@ int main(int argc, char *argv[])
     
     // Register WindowController with QML
     engine.rootContext()->setContextProperty("windowController", new WindowController(&app));
+    
+    // Register SystemAlert with QML
+    engine.rootContext()->setContextProperty("systemAlert", new SystemAlert(&app));
     
     const QUrl url(mainQmlFile);
     QObject::connect(
