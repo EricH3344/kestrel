@@ -3,6 +3,8 @@
 
 #include <QApplication>
 #include <QQmlApplicationEngine>
+#include <QQmlContext>
+#include "windowcontroller.h"
 
 #include "autogen/environment.h"
 
@@ -12,6 +14,10 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
 
     QQmlApplicationEngine engine;
+    
+    // Register WindowController with QML
+    engine.rootContext()->setContextProperty("windowController", new WindowController(&app));
+    
     const QUrl url(mainQmlFile);
     QObject::connect(
                 &engine, &QQmlApplicationEngine::objectCreated, &app,

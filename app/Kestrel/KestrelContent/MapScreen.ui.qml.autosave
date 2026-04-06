@@ -364,11 +364,11 @@ Senescence Rate:"
         }
         Item {
             id: frame_13
-            x: 0
 
             y: 36
-
+            
             height: 820
+            anchors.left: parent.left
             width: 298
 
             clip: true
@@ -1236,8 +1236,9 @@ Senescence Rate:"
 
             height: 32
             width: 1440
-
+            
             color: "#f2f2f7"
+            anchors.bottom: parent.bottom
         }
         Item {
             id: fields

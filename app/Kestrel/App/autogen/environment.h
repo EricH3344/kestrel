@@ -8,7 +8,6 @@
 #include <QGuiApplication>
 #include "qqmlextensionplugin.h"
 
-Q_IMPORT_QML_PLUGIN(KestrelPlugin)
 Q_IMPORT_QML_PLUGIN(KestrelContentPlugin)
 
 const char mainQmlFile[] = "qrc:/qt/qml/KestrelContent/App.qml";

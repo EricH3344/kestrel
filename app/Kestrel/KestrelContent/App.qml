@@ -11,8 +11,8 @@ Window {
     title: "Kestrel Companion App"
     flags: Qt.FramelessWindowHint | Qt.Window
 
-    property int currentScreen: 0
-    property string currentScreenPath: "Database.ui.qml"
+    property int currentScreen: 2
+    property string currentScreenPath: "MapScreen.ui.qml"
 
     // Window dragging support
     DragHandler {
@@ -68,9 +68,9 @@ Window {
         appWindow.close()
     }
 
-    // Initialize with Database screen
+    // Initialize with MapScreen
     Component.onCompleted: {
-        showDatabase()
+        showMap()
     }
 }
 

@@ -41,10 +41,10 @@ Column {
         Item {
             id: tabs
 
-            x: 479
             y: 32
 
             height: 38
+            anchors.horizontalCenter: parent.horizontalCenter
             width: 440
 
             Image {
@@ -83,16 +83,17 @@ Column {
             width: 1440
 
             color: "#f2f2f7"
+            anchors.top: parent.top
 
             Rectangle {
                 id: parts_Title_Bar_Caption_Control_Group
 
-                x: 1302
 
                 height: 32
                 width: 138
 
                 color: "transparent"
+                anchors.right: parent.right
                 topRightRadius: 7
 
                 Item {
@@ -107,7 +108,7 @@ Column {
                         height: 32
                         width: 46
 
-                        color: "#00ffffff"
+                        color: mouseArea1.containsMouse ? "#e0e0e0" : "#00ffffff"
                     }
                     Text {
                         id: chromeMinimize
@@ -129,6 +130,12 @@ Column {
                         textFormat: Text.PlainText
                         verticalAlignment: Text.AlignVCenter
                     }
+                    MouseArea {
+                        id: mouseArea1
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: windowController.minimize()
+                    }
                 }
                 Item {
                     id: parts_Title_Bar_Caption_Control_Button_1
@@ -144,7 +151,7 @@ Column {
                         height: 32
                         width: 46
 
-                        color: "#00ffffff"
+                        color: mouseArea2.containsMouse ? "#e0e0e0" : "#00ffffff"
                     }
                     Text {
                         id: chromeMaximize
@@ -166,6 +173,12 @@ Column {
                         textFormat: Text.PlainText
                         verticalAlignment: Text.AlignVCenter
                     }
+                    MouseArea {
+                        id: mouseArea2
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: windowController.maximize()
+                    }
                 }
                 Item {
                     id: parts_Title_Bar_Caption_Control_Button_2
@@ -181,7 +194,7 @@ Column {
                         height: 32
                         width: 46
 
-                        color: "#00ffffff"
+                        color: mouseArea3.containsMouse ? "#c70039" : "#00ffffff"
                         topRightRadius: 7
                     }
                     Text {
@@ -204,15 +217,21 @@ Column {
                         textFormat: Text.PlainText
                         verticalAlignment: Text.AlignVCenter
                     }
+                    MouseArea {
+                        id: mouseArea3
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: windowController.closeWindow()
+                    }
                 }
             }
             Image {
                 id: image_1
 
-                x: 699
                 y: 1
 
                 source: Qt.resolvedUrl("assets/image_5.png")
+                anchors.horizontalCenter: parent.horizontalCenter
             }
             Text {
                 id: chromeMinimize_1
