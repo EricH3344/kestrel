@@ -93,6 +93,14 @@ Column {
                 }
             }
 
+            Rectangle {
+                id: mapHover
+                x: 47
+                y: 0
+                width: 58
+                height: 37
+                color: mapMouseArea.containsMouse && viewHeader.currentScreen !== 2 ? "#f5f5f5" : "transparent"
+            }
             Text {
                 id: mapText
                 x: 47
@@ -111,13 +119,23 @@ Column {
                 font.family: "Inter"
             }
             MouseArea {
+                id: mapMouseArea
                 x: 47
                 y: 0
                 width: 58
                 height: 38
+                hoverEnabled: true
                 onClicked: if (viewHeader.appWindow) viewHeader.appWindow.showMap()
             }
 
+            Rectangle {
+                id: dbHover
+                x: 105
+                y: 0
+                width: 95
+                height: 37
+                color: dbMouseArea.containsMouse && viewHeader.currentScreen !== 0 ? "#f5f5f5" : "transparent"
+            }
             Text {
                 id: dbText
                 x: 105
@@ -136,13 +154,23 @@ Column {
                 font.family: "Inter"
             }
             MouseArea {
+                id: dbMouseArea
                 x: 105
                 y: 0
                 width: 95
                 height: 38
+                hoverEnabled: true
                 onClicked: if (viewHeader.appWindow) viewHeader.appWindow.showDatabase()
             }
 
+            Rectangle {
+                id: flHover
+                x: 200
+                y: 0
+                width: 108
+                height: 37
+                color: flMouseArea.containsMouse && viewHeader.currentScreen !== 1 ? "#f5f5f5" : "transparent"
+            }
             Text {
                 id: flText
                 x: 200
@@ -161,13 +189,23 @@ Column {
                 font.family: "Inter"
             }
             MouseArea {
+                id: flMouseArea
                 x: 200
                 y: 0
                 width: 108
                 height: 38
+                hoverEnabled: true
                 onClicked: if (viewHeader.appWindow) viewHeader.appWindow.showFlightLogs()
             }
 
+            Rectangle {
+                id: reportsHover
+                x: 308
+                y: 0
+                width: 108
+                height: 37
+                color: reportsMouseArea.containsMouse && viewHeader.currentScreen !== 3 ? "#f5f5f5" : "transparent"
+            }
             Text {
                 id: reportsText
                 x: 308
@@ -186,10 +224,12 @@ Column {
                 font.family: "Inter"
             }
             MouseArea {
+                id: reportsMouseArea
                 x: 308
                 y: 0
                 width: 108
                 height: 38
+                hoverEnabled: true
                 onClicked: if (viewHeader.appWindow) viewHeader.appWindow.showReports()
             }
 
@@ -707,7 +747,7 @@ Column {
                         height: 33
                         width: 33
                         
-                        color: "#ffffff"
+                        color: addMouseArea.containsMouse ? "#f5f5f5" : "#ffffff"
                         border.color: "#b3b3b3"
                         border.width: 1
                         clip: true
@@ -732,7 +772,9 @@ Column {
                         }
                         
                         MouseArea {
+                            id: addMouseArea
                             anchors.fill: parent
+                            hoverEnabled: true
                             onClicked: if (viewHeader.appWindow) viewHeader.appWindow.openCreateProjectDialog()
                         }
                     }

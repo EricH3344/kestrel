@@ -11,8 +11,16 @@ Rectangle {
     border.width: 1
     clip: true
     color: "#ffffff"
-    
+
     property var parentWindow: null
+    property string projectName: "new project"
+    property string projectDirectory: ""
+    property string basePath: ""
+    property var importedFiles: []
+    property int importedFilesCount: 0
+
+    signal projectCreateRequested(string projectName, string projectDirectory, var importedFiles)
+    signal projectCancelRequested()
 
     Item {
         id: group_8
@@ -45,7 +53,7 @@ Rectangle {
                     height: 32
                     width: 46
 
-                    color: "#00ffffff"
+                    color: mouseAreaMinimize.containsMouse ? "#e0e0e0" : "#00ffffff"
                 }
                 Text {
                     id: chromeMinimize
@@ -68,13 +76,15 @@ Rectangle {
                     verticalAlignment: Text.AlignVCenter
                 }
                 MouseArea {
+                    id: mouseAreaMinimize
                     anchors.fill: parent
+                    hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        if (create_Project.parentWindow) {
-                            create_Project.parentWindow.showMinimized()
-                        }
-                    }
+                }
+                Connections {
+                    target: mouseAreaMinimize
+                    onClicked: createProjectController.minimize(
+                                   create_Project.parentWindow)
                 }
             }
             Item {
@@ -91,7 +101,12 @@ Rectangle {
                     height: 32
                     width: 46
 
-                    color: "#00ffffff"
+                    color: mouseAreaClose.containsMouse ? "#c70039" : "#00ffffff"
+                    radius: 0
+                    topLeftRadius: 0
+                    topRightRadius: 7
+                    bottomLeftRadius: 0
+                    bottomRightRadius: 0
                 }
                 Text {
                     id: chromeClose
@@ -102,7 +117,7 @@ Rectangle {
                     height: 16
                     width: 17
 
-                    color: "#e4000000"
+                    color: mouseAreaClose.containsMouse ? "#ffffff" : "#e4000000"
                     font.family: "Segoe Fluent Icons"
                     font.pixelSize: 10
                     font.weight: Font.Normal
@@ -114,13 +129,15 @@ Rectangle {
                     verticalAlignment: Text.AlignVCenter
                 }
                 MouseArea {
+                    id: mouseAreaClose
                     anchors.fill: parent
+                    hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        if (create_Project.parentWindow) {
-                            create_Project.parentWindow.close()
-                        }
-                    }
+                }
+                Connections {
+                    target: mouseAreaClose
+                    onClicked: createProjectController.closeWindow(
+                                   create_Project.parentWindow)
                 }
             }
         }
@@ -212,6 +229,14 @@ Rectangle {
             }
         }
         Rectangle {
+            id: rectangle_238_hover
+
+            height: 124
+            width: 371
+
+            color: importFilesMouseArea.containsMouse ? "#f5f5f5" : "transparent"
+        }
+        Rectangle {
             id: rectangle_238
 
             height: 124
@@ -220,6 +245,25 @@ Rectangle {
             border.color: "#000000"
             border.width: 1
             color: "transparent"
+        }
+        MouseArea {
+            id: importFilesMouseArea
+            x: 0
+            y: 0
+            height: 124
+            width: 371
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+        }
+        Connections {
+            target: importFilesMouseArea
+            onClicked: {
+                var selectedFiles = fileDialogHelper.selectFiles(create_Project.projectDirectory, "TIFF Files (*.tiff *.tif)")
+                if (selectedFiles && selectedFiles.length > 0) {
+                    create_Project.importedFiles = selectedFiles
+                    create_Project.importedFilesCount = selectedFiles.length
+                }
+            }
         }
         Text {
             id: import_Files
@@ -277,7 +321,7 @@ Rectangle {
             horizontalAlignment: Text.AlignRight
             lineHeight: 16.80
             lineHeightMode: Text.FixedHeight
-            text: "X files imported"
+            text: create_Project.importedFilesCount + " file" + (create_Project.importedFilesCount !== 1 ? "s" : "") + " imported"
             textFormat: Text.PlainText
             verticalAlignment: Text.AlignVCenter
         }
@@ -321,35 +365,42 @@ Rectangle {
 
             Rectangle {
                 id: input
+                x: 8
+                y: 0
 
                 height: 27
-                width: 251
+                width: 243
 
                 border.color: "#d9d9d9"
                 border.width: 1
                 color: "#ffffff"
                 radius: 8
+                clip: true
 
-                Text {
+                TextInput {
                     id: value
 
-                    x: 16
-                    y: 5.50
+                    x: 8
+                    y: 6
 
                     height: 16
-                    width: 220
+                    width: 227
 
                     color: "#1e1e1e"
                     font.family: "Inter"
                     font.pixelSize: 16
                     font.weight: Font.Normal
-                    horizontalAlignment: Text.AlignLeft
-                    lineHeight: 16
-                    lineHeightMode: Text.FixedHeight
-                    text: ""
-                    textFormat: Text.PlainText
-                    verticalAlignment: Text.AlignTop
-                    wrapMode: Text.WordWrap
+                    horizontalAlignment: TextInput.AlignLeft
+                    verticalAlignment: TextInput.AlignVCenter
+                    text: create_Project.projectDirectory
+                    cursorPosition: 0
+                    selectByMouse: true
+
+                    Binding {
+                        target: create_Project
+                        property: "projectDirectory"
+                        value: value.text
+                    }
                 }
             }
         }
@@ -368,7 +419,7 @@ Rectangle {
             horizontalAlignment: Text.AlignLeft
             lineHeight: 16.80
             lineHeightMode: Text.FixedHeight
-            text: "Project Home"
+            text: "Project Directory"
             textFormat: Text.PlainText
             verticalAlignment: Text.AlignVCenter
         }
@@ -403,7 +454,7 @@ Rectangle {
                 horizontalAlignment: Text.AlignLeft
                 lineHeight: 22.40
                 lineHeightMode: Text.FixedHeight
-                text: "Label"
+                text: "Project Name"
                 textFormat: Text.PlainText
                 verticalAlignment: Text.AlignTop
                 visible: false
@@ -430,35 +481,42 @@ Rectangle {
             }
             Rectangle {
                 id: input_1
+                x: 8
+                y: 2
 
                 height: 27
-                width: 286
+                width: 278
 
                 border.color: "#d9d9d9"
                 border.width: 1
                 color: "#ffffff"
                 radius: 8
+                clip: true
 
-                Text {
+                TextInput {
                     id: value_1
 
-                    x: 16
-                    y: 5.50
+                    x: 8
+                    y: 5
 
                     height: 16
-                    width: 255
+                    width: 262
 
                     color: "#1e1e1e"
                     font.family: "Inter"
                     font.pixelSize: 16
                     font.weight: Font.Normal
-                    horizontalAlignment: Text.AlignLeft
-                    lineHeight: 16
-                    lineHeightMode: Text.FixedHeight
-                    text: ""
-                    textFormat: Text.PlainText
-                    verticalAlignment: Text.AlignTop
-                    wrapMode: Text.WordWrap
+                    horizontalAlignment: TextInput.AlignLeft
+                    verticalAlignment: TextInput.AlignVCenter
+                    text: create_Project.projectName
+                    cursorPosition: 0
+                    selectByMouse: true
+
+                    Binding {
+                        target: create_Project
+                        property: "projectName"
+                        value: value_1.text
+                    }
                 }
             }
             Text {
@@ -538,6 +596,24 @@ Rectangle {
                 }
             }
         }
+
+        MouseArea {
+            id: folderMouseArea
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+        }
+
+        Connections {
+            target: folderMouseArea
+            onClicked: {
+                var selectedPath = fileDialogHelper.selectFolder(
+                            create_Project.projectDirectory)
+                if (selectedPath !== "") {
+                    create_Project.projectDirectory = selectedPath
+                }
+            }
+        }
     }
     Item {
         id: group_7
@@ -583,6 +659,21 @@ Rectangle {
                 verticalAlignment: Text.AlignTop
                 wrapMode: Text.WordWrap
             }
+
+            MouseArea {
+                id: createButtonMouseArea
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+            }
+
+            Connections {
+                target: createButtonMouseArea
+                onClicked: {
+                    create_Project.projectCreateRequested(create_Project.projectName, 
+                                                         create_Project.projectDirectory, 
+                                                         create_Project.importedFiles)
+                }
+            }
         }
         Rectangle {
             id: button_2
@@ -599,12 +690,6 @@ Rectangle {
             Text {
                 id: button_3
 
-                x: 15
-                y: 7
-
-                height: 16
-                width: 54
-
                 color: "#1e1e1e"
                 font.family: "Inter"
                 font.pixelSize: 16
@@ -613,9 +698,30 @@ Rectangle {
                 lineHeight: 16
                 lineHeightMode: Text.FixedHeight
                 text: "Cancel"
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                anchors.leftMargin: 18
+                anchors.rightMargin: 18
+                anchors.topMargin: 6
+                anchors.bottomMargin: 6
                 textFormat: Text.PlainText
                 verticalAlignment: Text.AlignTop
                 wrapMode: Text.WordWrap
+            }
+
+            MouseArea {
+                id: cancelButtonMouseArea
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+            }
+
+            Connections {
+                target: cancelButtonMouseArea
+                onClicked: {
+                    create_Project.projectCancelRequested()
+                }
             }
         }
     }

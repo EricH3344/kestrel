@@ -5,6 +5,16 @@ target_sources(${CMAKE_PROJECT_NAME} PUBLIC
     "windowcontroller.cpp"
     "../src/SystemAlert.h"
     "../src/SystemAlert.cpp"
+    "../src/CreateProjectController.h"
+    "../src/CreateProjectController.cpp"
+    "../src/PathHelper.h"
+    "../src/PathHelper.cpp"
+    "../src/FileDialogHelper.h"
+    "../src/FileDialogHelper.cpp"
+    "../src/ProjectCreator.h"
+    "../src/ProjectCreator.cpp"
+    "../src/ProjectLoader.h"
+    "../src/ProjectLoader.cpp"
 )
 
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE

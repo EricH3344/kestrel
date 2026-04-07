@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import KestrelContent
 
 Window {
     id: createProjectWindow
@@ -12,6 +13,15 @@ Window {
     property int lastMouseX: 0
     property int lastMouseY: 0
     property var parentAppWindow: null
+    
+    function resetFields() {
+        createProject.projectName = "new project"
+        var defaultPath = pathHelper.getDefaultProjectPath("new project")
+        createProject.projectDirectory = defaultPath
+        createProject.basePath = pathHelper.getDocumentsPath() + "/Kestrel Projects"
+        createProject.importedFiles = []
+        createProject.importedFilesCount = 0
+    }
     
     onClosing: {
         if (parentAppWindow) {
@@ -47,8 +57,57 @@ Window {
         }
 
         Create_Project {
+            id: createProject
             anchors.fill: parent
             parentWindow: createProjectWindow
+            
+            Component.onCompleted: {
+                var defaultPath = pathHelper.getDefaultProjectPath(projectName)
+                projectDirectory = defaultPath
+                basePath = pathHelper.getDocumentsPath() + "/Kestrel Projects"
+            }
+            
+            // When project name changes, update the full path using basePath + new name
+            onProjectNameChanged: {
+                projectDirectory = basePath + "/" + projectName
+            }
+            
+            // When directory is manually edited, update the base path for future name changes
+            onProjectDirectoryChanged: {
+                var newBasePath = createProject.projectDirectory.substring(0, 
+                    createProject.projectDirectory.lastIndexOf("/"))
+                if (newBasePath !== basePath) {
+                    basePath = newBasePath
+                }
+            }
+
+            // Handle Create button click
+            onProjectCreateRequested: (projectName, projectDirectory, importedFiles) => {
+                projectCreator.createProject(projectName, projectDirectory, importedFiles)
+            }
+
+            // Handle Cancel button click
+            onProjectCancelRequested: {
+                createProjectWindow.close()
+            }
+        }
+
+        Connections {
+            target: projectCreator
+            onProjectCreationCompleted: (projectPath) => {
+                console.log("Project created successfully at:", projectPath)
+                createProjectWindow.resetFields()
+                createProjectWindow.close()
+            }
+            onProjectCreationFailed: (errorMessage) => {
+                console.error("Project creation failed:", errorMessage)
+            }
+            onProjectCreationStarted: (projectName) => {
+                console.log("Creating project:", projectName)
+            }
+            onProjectCreationProgress: (currentFile, totalFiles) => {
+                console.log("Importing file", currentFile, "of", totalFiles)
+            }
         }
     }
 }

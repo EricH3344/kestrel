@@ -11,13 +11,13 @@ qt6_add_qml_module(KestrelContent
     QML_FILES
         "App.qml"
         "Create_Project.ui.qml"
+        "CreateProjectWindow.qml"
         "Database.ui.qml"
         "Flight_Logs.ui.qml"
         "MapScreen.ui.qml"
         "Reports.ui.qml"
         "Screen01.ui.qml"
         "ViewHeader.qml"
-        "CreateProjectWindow.qml"
     RESOURCES
         "assets/add.png"
         "assets/image_1.png"

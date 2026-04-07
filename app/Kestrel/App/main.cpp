@@ -6,6 +6,11 @@
 #include <QQmlContext>
 #include "windowcontroller.h"
 #include "../src/SystemAlert.h"
+#include "../src/CreateProjectController.h"
+#include "../src/PathHelper.h"
+#include "../src/FileDialogHelper.h"
+#include "../src/ProjectCreator.h"
+#include "../src/ProjectLoader.h"
 
 #include "autogen/environment.h"
 
@@ -21,6 +26,21 @@ int main(int argc, char *argv[])
     
     // Register SystemAlert with QML
     engine.rootContext()->setContextProperty("systemAlert", new SystemAlert(&app));
+    
+    // Register CreateProjectController with QML
+    engine.rootContext()->setContextProperty("createProjectController", new CreateProjectController(&app));
+    
+    // Register PathHelper with QML
+    engine.rootContext()->setContextProperty("pathHelper", new PathHelper(&app));
+    
+    // Register FileDialogHelper with QML
+    engine.rootContext()->setContextProperty("fileDialogHelper", new FileDialogHelper(&app));
+    
+    // Register ProjectCreator with QML
+    engine.rootContext()->setContextProperty("projectCreator", new ProjectCreator(&app));
+    
+    // Register ProjectLoader with QML
+    engine.rootContext()->setContextProperty("projectLoader", new ProjectLoader(&app));
     
     const QUrl url(mainQmlFile);
     QObject::connect(

@@ -129,6 +129,9 @@ Window {
             }
         }
         
+        // Reset fields when opening the dialog
+        createProjectWindow.resetFields()
+        
         setDialogBlocking(true)
         createProjectWindow.visible = true
         createProjectWindow.raise()
