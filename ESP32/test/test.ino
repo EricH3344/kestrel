@@ -1,6 +1,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <WebSocketsServer.h>
+#include <DNSServer.h>
 
 // Receiver Pins
 #define THRO 34
@@ -20,6 +21,9 @@
 const int pwmPins[CHANNELS] = {THRO, AILE, ELEV, RUDD, GEAR, AUX1};
 volatile uint32_t pulseStart[CHANNELS];
 volatile uint16_t pwmValues[CHANNELS] = {1500, 1500, 1500, 1500, 1500, 1500}; 
+const byte DNS_PORT = 53;
+DNSServer dnsServer;
+portMUX_TYPE pwmMux = portMUX_INITIALIZER_UNLOCKED;
 
 // ISR for PWM Capture
 void IRAM_ATTR handlePWM(int ch) {
@@ -57,7 +61,7 @@ WebSocketsServer webSocket = WebSocketsServer(81);
 
 // FreeRTOS Task Handles
 TaskHandle_t RadioTask;
-TaskHandle_t MainLogicTask;
+TaskHandle_t SBUSTransmissionTask;
 
 const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
@@ -213,7 +217,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         let el = document.getElementById("modeText");
         if (pwm < 1300) { el.innerText = "STABILIZE"; el.style.color = "#a3be8c"; }
         else if (pwm <= 1700) { el.innerText = "POSHOLD"; el.style.color = "#ebcb8b"; }
-        else { el.innerText = "LOITER"; el.style.color = "#81a1c1"; }
+        else { el.innerText = "AUTO"; el.style.color = "#81a1c1"; }
     }
 
     function setH(id, val) {
@@ -236,42 +240,23 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         setH("gear", d.vals[4]); setH("aux1", d.vals[5]);
     };
 </script>
+
+<button id="testBtn" onclick="toggleTestMode()" style="padding:10px; background:#bf616a; color:white; border:none; border-radius:5px;">ENTER TEST MODE</button>
+<script>
+    let testModeActive = false;
+    function toggleTestMode() {
+        testModeActive = !testModeActive;
+        const btn = document.getElementById("testBtn");
+        btn.innerText = testModeActive ? "EXIT TEST MODE" : "ENTER TEST MODE";
+        btn.style.background = testModeActive ? "#a3be8c" : "#bf616a";
+        
+        // Send the command to the ESP32
+        ws.send(JSON.stringify({type: "testMode", value: testModeActive}));
+    }
+</script>
 </body>
 </html>
 )rawliteral";
-
-// Core 0: Radio & Communication
-void radioTaskLoop(void * pvParameters) {
-  WiFi.softAP(ssid, password);
-  
-  server.on("/", []() { server.send_P(200, "text/html", INDEX_HTML); });
-  server.begin();
-  
-  webSocket.begin();
-  webSocket.onEvent([](uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
-    if(type == WStype_CONNECTED) connectedClients++;
-    if(type == WStype_DISCONNECTED) connectedClients--;
-  });
-
-  char jsonBuf[128];
-  uint32_t lastBroadcast = 0;
-
-  for(;;) {
-    server.handleClient();
-    webSocket.loop();
-
-    // Broadcast telemetry to dashboard every 100ms
-    if (connectedClients > 0 && (millis() - lastBroadcast > 100)) {
-      lastBroadcast = millis();
-      // Using snprintf instead of String+ to prevent Heap Corruption
-      snprintf(jsonBuf, sizeof(jsonBuf), "{\"vals\":[%d,%d,%d,%d,%d,%d]}",
-               pwmValues[0], pwmValues[1], pwmValues[2], 
-               pwmValues[3], pwmValues[4], pwmValues[5]);
-      webSocket.broadcastTXT(jsonBuf);
-    }
-    vTaskDelay(1);
-  }
-}
 
 void createSbusPacket(uint8_t *sbusPacket) {
     memset(sbusPacket, 0, 25);
@@ -307,6 +292,47 @@ void createSbusPacket(uint8_t *sbusPacket) {
     sbusPacket[24] = 0x00;
 }
 
+// Core 0: Radio & Communication
+void radioTask(void * pvParameters) {
+  WiFi.softAP(ssid, password);
+
+  dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
+  
+  server.on("/", []() { server.send_P(200, "text/html", INDEX_HTML); });
+  server.onNotFound([]() { server.send_P(200, "text/html", INDEX_HTML); });
+  server.begin();
+  
+  webSocket.begin();
+  webSocket.onEvent([](uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
+    if(type == WStype_CONNECTED) connectedClients++; // Make it only allow one connection at a time
+    if(type == WStype_DISCONNECTED) connectedClients--;
+  });
+
+  char jsonBuf[128];
+  uint32_t lastBroadcast = 0;
+
+  for(;;) {
+    dnsServer.processNextRequest();
+    server.handleClient();
+    webSocket.loop();
+
+    // Broadcast telemetry to dashboard every 100ms
+    if (connectedClients > 0 && (millis() - lastBroadcast > 100)) {
+        lastBroadcast = millis();
+        // Mutex to safely read PWM values while ISRs may be updating them
+        uint16_t snap[CHANNELS];
+        portENTER_CRITICAL(&pwmMux);
+        memcpy(snap, (void*)pwmValues, sizeof(snap));
+        portEXIT_CRITICAL(&pwmMux);
+
+        snprintf(jsonBuf, sizeof(jsonBuf), "{\"vals\":[%d,%d,%d,%d,%d,%d]}",
+                snap[0], snap[1], snap[2], snap[3], snap[4], snap[5]);
+        webSocket.broadcastTXT(jsonBuf);
+    }
+    vTaskDelay(1);
+  }
+}
+
 // Core 1: sbus Transmission
 void sbusTransmissionTask(void* pvParameters) {
     Serial2.begin(100000, SERIAL_8E2, 16, SBUS, true);
@@ -335,16 +361,22 @@ void setup() {
     attachInterrupt(digitalPinToInterrupt(GEAR), pwmISR4, CHANGE);
     attachInterrupt(digitalPinToInterrupt(AUX1), pwmISR5, CHANGE);
 
-    // Pin the Radio loop to Core 0
-    xTaskCreatePinnedToCore(radioTaskLoop, "RadioTask", 12288, NULL, 1, &RadioTask, 0);
+    // Pin the Radio loop to Core 0 (Hard Thread Affinity)
+    if (xTaskCreatePinnedToCore(radioTask, "Radio Task", 12288, NULL, 1, &RadioTask, 0) != pdPASS){
+        Serial.println("RADIO FAILURE: Restarting...");
+        delay(2000);
+        ESP.restart();
+     }
     // Pin the SBUS Transmission loop to Core 1
-    xTaskCreatePinnedToCore(sbusTransmissionTask, "SBUS Transmission", 8192, NULL, 3, &MainLogicTask, 1);
+    if (xTaskCreatePinnedToCore(sbusTransmissionTask, "SBUS Transmission Task", 8192, NULL, 1, &SBUSTransmissionTask, 1) != pdPASS){
+        Serial.println("TRANSMISSION FAILURE: Restarting...");
+        delay(2000);
+        ESP.restart();
+     }
 }
 
 void loop() {
-    Serial.printf("PWM -> T:%d A:%d E:%d R:%d G:%d X:%d\n",
-                      pwmValues[0], pwmValues[1], pwmValues[2], 
-                      pwmValues[3], pwmValues[4], pwmValues[5]);
-    vTaskDelay(pdMS_TO_TICKS(200));
-    //vTaskDelete(NULL);
+    //Serial.printf("PWM -> T:%d A:%d E:%d R:%d G:%d X:%d\n", pwmValues[0], pwmValues[1], pwmValues[2], pwmValues[3], pwmValues[4], pwmValues[5]);
+    //vTaskDelay(pdMS_TO_TICKS(200));
+    vTaskDelete(NULL);
 }
