@@ -2,6 +2,7 @@
 #include <WebServer.h>
 #include <WebSocketsServer.h>
 #include <DNSServer.h>
+#include <HTTPClient.h>
 
 // Receiver Pins
 #define THRO 34
@@ -24,6 +25,9 @@ volatile uint16_t pwmValues[CHANNELS] = {1500, 1500, 1500, 1500, 1500, 1500};
 const byte DNS_PORT = 53;
 DNSServer dnsServer;
 portMUX_TYPE pwmMux = portMUX_INITIALIZER_UNLOCKED;
+volatile bool captureRequestPending = false;
+portMUX_TYPE captureMux = portMUX_INITIALIZER_UNLOCKED;
+String micasenseCaptureUrl = "http://192.168.1.83/capture";
 
 // ISR for PWM Capture
 void IRAM_ATTR handlePWM(int ch) {
@@ -55,6 +59,10 @@ void IRAM_ATTR pwmISR5(){ handlePWM(5); }
 const char* ssid = "KESTREL_AP";
 const char* password = "123456789";
 volatile int connectedClients = 0;
+
+// Micasense Network Configuration
+const char* sta_ssid = "rededgeRX04-2206064-SC";
+const char* sta_password = "micasense";
 
 WebServer server(80);
 WebSocketsServer webSocket = WebSocketsServer(81);
@@ -100,7 +108,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
     /* Vertical bars span from top to the Yaw row (Row 1 to 3) */
     .v-wrapper { 
-        grid-row: 1 / span 3; 
+        grid-row: 1 / span 3;
         display: flex; 
         flex-direction: column; 
         align-items: center; 
@@ -241,17 +249,42 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     };
 </script>
 
-<button id="testBtn" onclick="toggleTestMode()" style="padding:10px; background:#bf616a; color:white; border:none; border-radius:5px;">ENTER TEST MODE</button>
+<div style="display: flex; gap: 15px; margin-top: 20px;">
+    <button id="testBtn" onclick="toggleTestMode()" style="padding:15px; background:#bf616a; color:white; font-weight:bold; border:none; border-radius:5px; cursor:pointer;">ENTER TEST MODE</button>
+    
+    <button id="captureBtn" onclick="triggerCamera()" style="padding:15px; background:#ebcb8b; color:#111; font-weight:bold; border:none; border-radius:5px; cursor:pointer;">CAPTURE</button>
+</div>
+
 <script>
     let testModeActive = false;
+
     function toggleTestMode() {
         testModeActive = !testModeActive;
         const btn = document.getElementById("testBtn");
         btn.innerText = testModeActive ? "EXIT TEST MODE" : "ENTER TEST MODE";
         btn.style.background = testModeActive ? "#a3be8c" : "#bf616a";
-        
         // Send the command to the ESP32
         ws.send(JSON.stringify({type: "testMode", value: testModeActive}));
+    }
+
+    // NEW: Function to send the capture command over WebSockets
+    function triggerCamera() {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({type: "capture"}));
+            
+            // Visual feedback that the button was pressed
+            const btn = document.getElementById("captureBtn");
+            const originalText = btn.innerText;
+            const originalBg = btn.style.background;
+            
+            btn.innerText = "CAPTURING...";
+            btn.style.background = "#a3be8c"; // Change to green temporarily
+            
+            setTimeout(() => {
+                btn.innerText = originalText;
+                btn.style.background = originalBg;
+            }, 1000);
+        }
     }
 </script>
 </body>
@@ -292,29 +325,104 @@ void createSbusPacket(uint8_t *sbusPacket) {
     sbusPacket[24] = 0x00;
 }
 
+bool sendCaptureRequest(const String &url) {
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("Capture skipped: STA not connected to camera network");
+        return false;
+    }
+
+    Serial.printf("Trying capture URL: %s\n", url.c_str());
+    HTTPClient http;
+    http.begin(url.c_str());
+    int httpCode = http.GET();
+    if (httpCode > 0) {
+        Serial.printf("Capture OK  HTTP %d\n", httpCode);
+        if (httpCode >= 400) {
+            Serial.println(http.getString());
+        }
+        http.end();
+        return true;
+    } else {
+        Serial.printf("Capture FAILED: %s\n", http.errorToString(httpCode).c_str());
+        http.end();
+        return false;
+    }
+}
+
 // Core 0: Radio & Communication
 void radioTask(void * pvParameters) {
-  WiFi.softAP(ssid, password);
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.softAP(ssid, password);
+    WiFi.begin(sta_ssid, sta_password);
 
-  dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
+    Serial.print("Connecting to Micasense");
+    int counter = 0;
+    while (WiFi.status() != WL_CONNECTED && counter < 20) {
+        delay(500);
+        Serial.print(".");
+        counter++;
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.println("\nConnected!");
+        Serial.print("ESP32 IP on Camera Network: ");
+        Serial.println(WiFi.localIP());
+    } else {
+        Serial.println("\nConnection Failed. Check SSID/Password.");
+    }
+
+    dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
   
-  server.on("/", []() { server.send_P(200, "text/html", INDEX_HTML); });
-  server.onNotFound([]() { server.send_P(200, "text/html", INDEX_HTML); });
-  server.begin();
+    server.on("/", []() { server.send_P(200, "text/html", INDEX_HTML); });
+    server.onNotFound([]() { server.send_P(200, "text/html", INDEX_HTML); });
+    server.begin();
   
-  webSocket.begin();
-  webSocket.onEvent([](uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
-    if(type == WStype_CONNECTED) connectedClients++; // Make it only allow one connection at a time
-    if(type == WStype_DISCONNECTED) connectedClients--;
-  });
+    webSocket.begin();
+    webSocket.onEvent([](uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
+        if(type == WStype_CONNECTED) {
+            connectedClients++;
+        } else if(type == WStype_DISCONNECTED) {
+            connectedClients--;
+        } else if(type == WStype_TEXT) {
+            String msg = String((char*)payload);
+            if (msg.indexOf("\"type\":\"capture\"") >= 0) {
+                portENTER_CRITICAL(&captureMux);
+                captureRequestPending = true;
+                portEXIT_CRITICAL(&captureMux);
+            } else if (msg.indexOf("\"type\":\"setCaptureUrl\"") >= 0) {
+                int idx = msg.indexOf("\"url\":");
+                if (idx >= 0) {
+                    int start = msg.indexOf('"', idx + 6) + 1;
+                    int end = msg.indexOf('"', start);
+                    if (start > 0 && end > start) {
+                        String newUrl = msg.substring(start, end);
+                        micasenseCaptureUrl = newUrl;
+                        webSocket.sendTXT(num, "{\"status\":\"capture URL updated\"}");
+                    }
+                }
+            }
+        }
+    });
 
-  char jsonBuf[128];
-  uint32_t lastBroadcast = 0;
+    char jsonBuf[128];
+    uint32_t lastBroadcast = 0;
 
-  for(;;) {
+    for(;;) {
     dnsServer.processNextRequest();
     server.handleClient();
     webSocket.loop();
+
+    bool triggerCapture = false;
+    portENTER_CRITICAL(&captureMux);
+    if (captureRequestPending) {
+        triggerCapture = true;
+        captureRequestPending = false;
+    }
+    portEXIT_CRITICAL(&captureMux);
+
+    if (triggerCapture) {
+        sendCaptureRequest(micasenseCaptureUrl);
+    }
 
     // Broadcast telemetry to dashboard every 100ms
     if (connectedClients > 0 && (millis() - lastBroadcast > 100)) {
@@ -330,7 +438,7 @@ void radioTask(void * pvParameters) {
         webSocket.broadcastTXT(jsonBuf);
     }
     vTaskDelay(1);
-  }
+    }
 }
 
 // Core 1: sbus Transmission
