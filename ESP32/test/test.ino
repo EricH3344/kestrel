@@ -18,6 +18,9 @@
 // SBUS Output Pin
 #define SBUS 4
 
+// Camera Trigger Pin
+#define CAM_TRIGGER 27
+
 // Global Variables
 const int pwmPins[CHANNELS] = {THRO, AILE, ELEV, RUDD, GEAR, AUX1};
 volatile uint32_t pulseStart[CHANNELS];
@@ -25,9 +28,12 @@ volatile uint16_t pwmValues[CHANNELS] = {1500, 1500, 1500, 1500, 1500, 1500};
 const byte DNS_PORT = 53;
 DNSServer dnsServer;
 portMUX_TYPE pwmMux = portMUX_INITIALIZER_UNLOCKED;
-volatile bool captureRequestPending = false;
-portMUX_TYPE captureMux = portMUX_INITIALIZER_UNLOCKED;
 String micasenseCaptureUrl = "http://192.168.1.83/capture";
+
+// FreeRTOS Task Handles
+TaskHandle_t RadioTask;
+TaskHandle_t SBUSTransmissionTask;
+TaskHandle_t ImageCaptureTask;
 
 // ISR for PWM Capture
 void IRAM_ATTR handlePWM(int ch) {
@@ -44,6 +50,16 @@ void IRAM_ATTR handlePWM(int ch) {
                 pwmValues[ch] = width;
             }
         }
+    }
+}
+
+// ISR for PixHawk captuire trigger
+void IRAM_ATTR onCameraTrigger() {
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+    vTaskNotifyGiveFromISR(ImageCaptureTask, &xHigherPriorityTaskWoken);
+    if (xHigherPriorityTaskWoken) {
+        portYIELD_FROM_ISR();
     }
 }
 
@@ -66,10 +82,6 @@ const char* sta_password = "micasense";
 
 WebServer server(80);
 WebSocketsServer webSocket = WebSocketsServer(81);
-
-// FreeRTOS Task Handles
-TaskHandle_t RadioTask;
-TaskHandle_t SBUSTransmissionTask;
 
 const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
@@ -223,9 +235,22 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
     function updateFlightMode(pwm) {
         let el = document.getElementById("modeText");
-        if (pwm < 1300) { el.innerText = "STABILIZE"; el.style.color = "#a3be8c"; }
-        else if (pwm <= 1700) { el.innerText = "POSHOLD"; el.style.color = "#ebcb8b"; }
-        else { el.innerText = "AUTO"; el.style.color = "#81a1c1"; }
+        
+        // Simplified Logic: 
+        // Catch > 1500 first, then < 1200, 
+        // Everything left automatically falls between 1200 and 1500 inclusive.
+        if (pwm > 1500) { 
+            el.innerText = "STABILIZE"; 
+            el.style.color = "#81a1c1"; 
+        } 
+        else if (pwm < 1200) { 
+            el.innerText = "AUTO"; 
+            el.style.color = "#a3be8c"; 
+        } 
+        else { 
+            el.innerText = "POSHOLD"; 
+            el.style.color = "#ebcb8b"; 
+        }
     }
 
     function setH(id, val) {
@@ -267,7 +292,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         ws.send(JSON.stringify({type: "testMode", value: testModeActive}));
     }
 
-    // NEW: Function to send the capture command over WebSockets
+    // Function to send the capture command over WebSockets
     function triggerCamera() {
         if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({type: "capture"}));
@@ -386,9 +411,7 @@ void radioTask(void * pvParameters) {
         } else if(type == WStype_TEXT) {
             String msg = String((char*)payload);
             if (msg.indexOf("\"type\":\"capture\"") >= 0) {
-                portENTER_CRITICAL(&captureMux);
-                captureRequestPending = true;
-                portEXIT_CRITICAL(&captureMux);
+                xTaskNotifyGive(ImageCaptureTask);
             } else if (msg.indexOf("\"type\":\"setCaptureUrl\"") >= 0) {
                 int idx = msg.indexOf("\"url\":");
                 if (idx >= 0) {
@@ -408,36 +431,25 @@ void radioTask(void * pvParameters) {
     uint32_t lastBroadcast = 0;
 
     for(;;) {
-    dnsServer.processNextRequest();
-    server.handleClient();
-    webSocket.loop();
+        dnsServer.processNextRequest();
+        server.handleClient();
+        webSocket.loop();
 
-    bool triggerCapture = false;
-    portENTER_CRITICAL(&captureMux);
-    if (captureRequestPending) {
-        triggerCapture = true;
-        captureRequestPending = false;
-    }
-    portEXIT_CRITICAL(&captureMux);
 
-    if (triggerCapture) {
-        sendCaptureRequest(micasenseCaptureUrl);
-    }
+        // Broadcast telemetry to dashboard every 100ms
+        if (connectedClients > 0 && (millis() - lastBroadcast > 100)) {
+            lastBroadcast = millis();
+            // Mutex to safely read PWM values while ISRs may be updating them
+            uint16_t snap[CHANNELS];
+            portENTER_CRITICAL(&pwmMux);
+            memcpy(snap, (void*)pwmValues, sizeof(snap));
+            portEXIT_CRITICAL(&pwmMux);
 
-    // Broadcast telemetry to dashboard every 100ms
-    if (connectedClients > 0 && (millis() - lastBroadcast > 100)) {
-        lastBroadcast = millis();
-        // Mutex to safely read PWM values while ISRs may be updating them
-        uint16_t snap[CHANNELS];
-        portENTER_CRITICAL(&pwmMux);
-        memcpy(snap, (void*)pwmValues, sizeof(snap));
-        portEXIT_CRITICAL(&pwmMux);
-
-        snprintf(jsonBuf, sizeof(jsonBuf), "{\"vals\":[%d,%d,%d,%d,%d,%d]}",
-                snap[0], snap[1], snap[2], snap[3], snap[4], snap[5]);
-        webSocket.broadcastTXT(jsonBuf);
-    }
-    vTaskDelay(1);
+            snprintf(jsonBuf, sizeof(jsonBuf), "{\"vals\":[%d,%d,%d,%d,%d,%d]}",
+                    snap[0], snap[1], snap[2], snap[3], snap[4], snap[5]);
+            webSocket.broadcastTXT(jsonBuf);
+        }
+        vTaskDelay(1);
     }
 }
 
@@ -454,6 +466,17 @@ void sbusTransmissionTask(void* pvParameters) {
     }
 }
 
+void imageCaptureTask(void * pvParameters) {
+     for (;;) {
+         uint32_t threadNotification = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+         if (threadNotification > 0) {
+             sendCaptureRequest(micasenseCaptureUrl);
+             vTaskDelay(pdMS_TO_TICKS(100)); // debounce delay
+         }
+     }
+}
+
 // SETUP
 void setup() {
     Serial.begin(115200);
@@ -468,6 +491,9 @@ void setup() {
     attachInterrupt(digitalPinToInterrupt(RUDD), pwmISR3, CHANGE);
     attachInterrupt(digitalPinToInterrupt(GEAR), pwmISR4, CHANGE);
     attachInterrupt(digitalPinToInterrupt(AUX1), pwmISR5, CHANGE);
+    attachInterrupt(digitalPinToInterrupt(CAM_TRIGGER), onCameraTrigger, RISING);
+
+    pinMode(CAM_TRIGGER, INPUT_PULLUP);
 
     // Pin the Radio loop to Core 0 (Hard Thread Affinity)
     if (xTaskCreatePinnedToCore(radioTask, "Radio Task", 12288, NULL, 1, &RadioTask, 0) != pdPASS){
@@ -481,6 +507,8 @@ void setup() {
         delay(2000);
         ESP.restart();
      }
+
+    xTaskCreate(imageCaptureTask, "Image Capture Task", 2048, NULL, 1, &ImageCaptureTask);
 }
 
 void loop() {
