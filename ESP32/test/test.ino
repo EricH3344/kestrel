@@ -1,7 +1,6 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <WebSocketsServer.h>
-#include <DNSServer.h>
 #include <HTTPClient.h>
 
 // Receiver Pins
@@ -25,8 +24,6 @@
 const int pwmPins[CHANNELS] = {THRO, AILE, ELEV, RUDD, GEAR, AUX1};
 volatile uint32_t pulseStart[CHANNELS];
 volatile uint16_t pwmValues[CHANNELS] = {1500, 1500, 1500, 1500, 1500, 1500}; 
-const byte DNS_PORT = 53;
-DNSServer dnsServer;
 portMUX_TYPE pwmMux = portMUX_INITIALIZER_UNLOCKED;
 String micasenseCaptureUrl = "http://192.168.1.83/capture";
 
@@ -37,18 +34,20 @@ TaskHandle_t ImageCaptureTask;
 
 // ISR for PWM Capture
 void IRAM_ATTR handlePWM(int ch) {
-    if (digitalRead(pwmPins[ch]) == HIGH) {
-        pulseStart[ch] = micros();
+    uint32_t currentMicros = micros();
+    if (gpio_get_level((gpio_num_t)pwmPins[ch]) == 1) {
+        pulseStart[ch] = currentMicros;
     } 
     else {
-        uint32_t width = micros() - pulseStart[ch];
+        uint32_t width = currentMicros - pulseStart[ch];
         if (width >= 900 && width <= 2100) {
-            // Apply inversion to Aileron (1) and Rudder (3)
+            portENTER_CRITICAL_ISR(&pwmMux);
             if (ch == 1 || ch == 3) {
                 pwmValues[ch] = 3000 - (uint16_t)width;
             } else {
                 pwmValues[ch] = width;
             }
+            portEXIT_CRITICAL_ISR(&pwmMux);
         }
     }
 }
@@ -137,7 +136,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         overflow: hidden;
     }
 
-    .v-fill { position: absolute; bottom: 0; width: 100%; background: #5e81ac; height: 50%; transition: height 0.05s; }
+    .v-fill { position: absolute; bottom: 0; width: 100%; background: #5e81ac; height: 100%; transform-origin: bottom; transform: scaleY(0.5); }
     .line-v { position: absolute; top: 50%; width: 100%; height: 2px; background: #bf616a; z-index: 10; transform: translateY(-50%); }
 
     .h-item { display: flex; flex-direction: column; align-items: center; width: 100%; }
@@ -150,7 +149,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         overflow: hidden;
     }
 
-    .h-fill { height: 100%; background: #81a1c1; width: 50%; transition: width 0.05s; }
+    .h-fill { height: 100%; background: #81a1c1; width: 100%; transform-origin: left; transform: scaleX(0.5); }
     .line-h { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: #bf616a; z-index: 10; transform: translateX(-50%); }
     
     .mode-display {
@@ -232,45 +231,58 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
 <script>
     var ws = new WebSocket('ws://' + location.hostname + ':81/');
+    ws.binaryType = 'arraybuffer';
+    var modeText = document.getElementById("modeText");
+    var fields = {
+        throVal: document.getElementById("throVal"),
+        rollVal: document.getElementById("rollVal"),
+        pitchVal: document.getElementById("pitchVal"),
+        yawVal: document.getElementById("yawVal"),
+        gearVal: document.getElementById("gearVal"),
+        aux1Val: document.getElementById("aux1Val"),
+        throFill: document.getElementById("throFill"),
+        rollFill: document.getElementById("rollFill"),
+        pitchFill: document.getElementById("pitchFill"),
+        yawFill: document.getElementById("yawFill"),
+        gearFill: document.getElementById("gearFill"),
+        aux1Fill: document.getElementById("aux1Fill")
+    };
 
     function updateFlightMode(pwm) {
-        let el = document.getElementById("modeText");
-        
-        // Simplified Logic: 
-        // Catch > 1500 first, then < 1200, 
-        // Everything left automatically falls between 1200 and 1500 inclusive.
-        if (pwm > 1500) { 
-            el.innerText = "STABILIZE"; 
-            el.style.color = "#81a1c1"; 
-        } 
-        else if (pwm < 1200) { 
-            el.innerText = "AUTO"; 
-            el.style.color = "#a3be8c"; 
-        } 
-        else { 
-            el.innerText = "POSHOLD"; 
-            el.style.color = "#ebcb8b"; 
+        if (pwm > 1510) {
+            modeText.textContent = "STABILIZE";
+            modeText.style.color = "#81a1c1";
+        } else if (pwm < 1200) {
+            modeText.textContent = "AUTO";
+            modeText.style.color = "#a3be8c";
+        } else {
+            modeText.textContent = "POSHOLD";
+            modeText.style.color = "#ebcb8b";
         }
     }
 
     function setH(id, val) {
-        let p = ((Math.max(1000, Math.min(2000, val)) - 1000) / 1000) * 100;
-        document.getElementById(id + "Val").innerText = val;
-        document.getElementById(id + "Fill").style.width = p + "%";
-        if(id === "gear") updateFlightMode(val);
+        var p = (Math.max(1000, Math.min(2000, val)) - 1000) / 1000;
+        fields[id + "Val"].textContent = val;
+        fields[id + "Fill"].style.transform = "scaleX(" + p + ")";
+        if (id === "gear") updateFlightMode(val);
     }
 
     function setV(id, val) {
-        let p = ((Math.max(1000, Math.min(2000, val)) - 1000) / 1000) * 100;
-        document.getElementById(id + "Val").innerText = val;
-        document.getElementById(id + "Fill").style.height = p + "%";
+        var p = (Math.max(1000, Math.min(2000, val)) - 1000) / 1000;
+        fields[id + "Val"].textContent = val;
+        fields[id + "Fill"].style.transform = "scaleY(" + p + ")";
     }
 
     ws.onmessage = function(e) {
-        var d = JSON.parse(e.data);
-        setV("thro", d.vals[0]); setH("roll", d.vals[1]);
-        setV("pitch", d.vals[2]); setH("yaw", d.vals[3]);
-        setH("gear", d.vals[4]); setH("aux1", d.vals[5]);
+        var raw = new Uint8Array(e.data);
+        var d = [];
+        for (var i = 0; i < 6; i++) {
+            d[i] = raw[i * 2] | (raw[i * 2 + 1] << 8);
+        }
+        setV("thro", d[0]); setH("roll", d[1]);
+        setV("pitch", d[2]); setH("yaw", d[3]);
+        setH("gear", d[4]); setH("aux1", d[5]);
     };
 </script>
 
@@ -320,10 +332,15 @@ void createSbusPacket(uint8_t *sbusPacket) {
     memset(sbusPacket, 0, 25);
     sbusPacket[0] = 0x0F;
 
+    uint16_t snap[CHANNELS];
+    portENTER_CRITICAL(&pwmMux);
+    memcpy(snap, (void*)pwmValues, sizeof(snap));
+    portEXIT_CRITICAL(&pwmMux);
+
     uint16_t sbusData[16];
     for (int i = 0; i < 16; i++) {
         if (i < CHANNELS) {
-            sbusData[i] = constrain(map(pwmValues[i], 1000, 2000, 172, 1811), 0, 2047);
+            sbusData[i] = constrain(map(snap[i], 1000, 2000, 172, 1811), 0, 2047);
         } else {
             sbusData[i] = 992;
         }
@@ -350,12 +367,8 @@ void createSbusPacket(uint8_t *sbusPacket) {
     sbusPacket[24] = 0x00;
 }
 
-bool sendCaptureRequest(const String &url) {
-    if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("Capture skipped: STA not connected to camera network");
-        return false;
-    }
 
+bool sendCaptureRequest(const String &url) {
     Serial.printf("Trying capture URL: %s\n", url.c_str());
     HTTPClient http;
     http.begin(url.c_str());
@@ -377,31 +390,17 @@ bool sendCaptureRequest(const String &url) {
 // Core 0: Radio & Communication
 void radioTask(void * pvParameters) {
     WiFi.mode(WIFI_AP_STA);
-    WiFi.softAP(ssid, password);
+    WiFi.softAP(ssid, password, 1, false, 4);
+    WiFi.setAutoReconnect(true);
     WiFi.begin(sta_ssid, sta_password);
+    Serial.print("AP IP: ");
+    Serial.println(WiFi.softAPIP());
+    Serial.println("Connecting to camera network in background...");
 
-    Serial.print("Connecting to Micasense");
-    int counter = 0;
-    while (WiFi.status() != WL_CONNECTED && counter < 20) {
-        delay(500);
-        Serial.print(".");
-        counter++;
-    }
-
-    if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("\nConnected!");
-        Serial.print("ESP32 IP on Camera Network: ");
-        Serial.println(WiFi.localIP());
-    } else {
-        Serial.println("\nConnection Failed. Check SSID/Password.");
-    }
-
-    dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
-  
     server.on("/", []() { server.send_P(200, "text/html", INDEX_HTML); });
     server.onNotFound([]() { server.send_P(200, "text/html", INDEX_HTML); });
     server.begin();
-  
+
     webSocket.begin();
     webSocket.onEvent([](uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
         if(type == WStype_CONNECTED) {
@@ -427,17 +426,15 @@ void radioTask(void * pvParameters) {
         }
     });
 
-    char jsonBuf[128];
     uint32_t lastBroadcast = 0;
 
     for(;;) {
-        dnsServer.processNextRequest();
         server.handleClient();
         webSocket.loop();
 
 
-        // Broadcast telemetry to dashboard every 100ms
-        if (connectedClients > 0 && (millis() - lastBroadcast > 100)) {
+        // Broadcast telemetry to dashboard every 5ms
+        if (connectedClients > 0 && (millis() - lastBroadcast > 5)) {
             lastBroadcast = millis();
             // Mutex to safely read PWM values while ISRs may be updating them
             uint16_t snap[CHANNELS];
@@ -445,11 +442,14 @@ void radioTask(void * pvParameters) {
             memcpy(snap, (void*)pwmValues, sizeof(snap));
             portEXIT_CRITICAL(&pwmMux);
 
-            snprintf(jsonBuf, sizeof(jsonBuf), "{\"vals\":[%d,%d,%d,%d,%d,%d]}",
-                    snap[0], snap[1], snap[2], snap[3], snap[4], snap[5]);
-            webSocket.broadcastTXT(jsonBuf);
+            uint8_t payload[CHANNELS * 2];
+            for (int i = 0; i < CHANNELS; i++) {
+                payload[i * 2] = snap[i] & 0xFF;
+                payload[i * 2 + 1] = (snap[i] >> 8) & 0xFF;
+            }
+            webSocket.broadcastBIN(payload, sizeof(payload));
         }
-        vTaskDelay(1);
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
 }
 
@@ -496,19 +496,19 @@ void setup() {
     pinMode(CAM_TRIGGER, INPUT_PULLUP);
 
     // Pin the Radio loop to Core 0 (Hard Thread Affinity)
-    if (xTaskCreatePinnedToCore(radioTask, "Radio Task", 12288, NULL, 1, &RadioTask, 0) != pdPASS){
+    if (xTaskCreatePinnedToCore(radioTask, "Radio Task", 12288, NULL, 5, &RadioTask, 0) != pdPASS){
         Serial.println("RADIO FAILURE: Restarting...");
         delay(2000);
         ESP.restart();
      }
     // Pin the SBUS Transmission loop to Core 1
-    if (xTaskCreatePinnedToCore(sbusTransmissionTask, "SBUS Transmission Task", 8192, NULL, 1, &SBUSTransmissionTask, 1) != pdPASS){
+    if (xTaskCreatePinnedToCore(sbusTransmissionTask, "SBUS Transmission Task", 8192, NULL, 5, &SBUSTransmissionTask, 1) != pdPASS){
         Serial.println("TRANSMISSION FAILURE: Restarting...");
         delay(2000);
         ESP.restart();
      }
 
-    xTaskCreate(imageCaptureTask, "Image Capture Task", 2048, NULL, 1, &ImageCaptureTask);
+    xTaskCreatePinnedToCore(imageCaptureTask, "Image Capture Task", 4096, NULL, 1, &ImageCaptureTask, 1);
 }
 
 void loop() {
