@@ -350,7 +350,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     <body>
         <div class="header-container">
             <h2>KESTREL Dashboard</h2>
-            <div id="killSwitchIndicator">ARMED</div>
+            <div id="killSwitchIndicator">ACTIVE</div>
         </div>
 
         <div class="dashboard-section">
@@ -424,9 +424,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             };
 
             function updateFlightMode(pwm) {
-                if (pwm > 1500) { modeText.textContent = "STABILIZE"; modeText.style.color = "#81a1c1"; }
-                else if (pwm < 1200) { modeText.textContent = "AUTO"; modeText.style.color = "#a3be8c"; }
-                else { modeText.textContent = "POSHOLD"; modeText.style.color = "#ebcb8b"; }
+                if (pwm > 1800) { modeText.textContent = "STABILIZE"; modeText.style.color = "#81a1c1"; }
+                else if (pwm < 1200) { modeText.textContent = "POSHOLD"; modeText.style.color = "#a3be8c"; }
+                else { modeText.textContent = "ALTHOLD"; modeText.style.color = "#ebcb8b"; }
             }
 
             function getArdupilotPWM(rawPwm) {
@@ -471,7 +471,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                         indicator.textContent = "KILLED";
                     } else {
                         indicator.style.background = "#a3be8c";
-                        indicator.textContent = "ARMED";
+                        indicator.textContent = "ACTIVE";
                     }
                 } else {
                     try {
@@ -524,7 +524,8 @@ void addLog(const String &message) {
     }
 }
 
-void createSbusPacket(uint8_t *sbusPacket, bool *killSwitchActive) {
+void createSbusPacket(uint8_t *sbusPacket, bool *killSwitchActive) 
+{
     memset(sbusPacket, 0, 25);
     sbusPacket[0] = 0x0F;
 
@@ -535,14 +536,23 @@ void createSbusPacket(uint8_t *sbusPacket, bool *killSwitchActive) {
 
     uint16_t sbusData[16];
     
+    // Detect the DXe's disarm switch state via the throttle drop
     *killSwitchActive = (snap[0] > 0 && snap[0] < 982);
 
     for (int i = 0; i < 16; i++) {
         if (i < CHANNELS) {
             if (i == 0 && *killSwitchActive) {
-                sbusData[i] = 0;
+                // Overwrite throttle to a standard 1000us minimum (SBUS 171)
+                // This tricks ArduPilot into staying out of Throttle Failsafe mode
+                sbusData[i] = 171; 
             } else {
                 sbusData[i] = constrain((snap[i] - 880) * 8 / 5, 0, 2047);
+            }
+        } else if (i == 7) { 
+            if (*killSwitchActive) {
+                sbusData[i] = 1792;
+            } else {
+                sbusData[i] = 171;
             }
         } else {
             sbusData[i] = 992;
@@ -551,7 +561,6 @@ void createSbusPacket(uint8_t *sbusPacket, bool *killSwitchActive) {
 
     int byteIdx = 1;
     int bitIdx = 0;
-
     for (int i = 0; i < 16; i++) {
         uint16_t chValue = sbusData[i] & 0x07FF;
         for (int b = 0; b < 11; b++) {
@@ -566,12 +575,7 @@ void createSbusPacket(uint8_t *sbusPacket, bool *killSwitchActive) {
         }
     }
 
-    if (*killSwitchActive) {
-        sbusPacket[23] = 0x08;
-    } else {
-        sbusPacket[23] = 0x00;
-    }
-    
+    sbusPacket[23] = 0x00;
     sbusPacket[24] = 0x00;
 }
 
@@ -707,7 +711,7 @@ void sbusTransmissionTask(void* pvParameters) {
         createSbusPacket(sbusPacket, (bool*)&killSwitchActive);
         // Transmit via UART2
         Serial2.write(sbusPacket, 25);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(7));
     }
 }
 
