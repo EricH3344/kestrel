@@ -1,6 +1,6 @@
 #include <WiFi.h>
 #include <WebServer.h>
-#include <WebSocketsServer.h>
+#include "src/WebSockets/src/WebSocketsServer.h"
 #include <HTTPClient.h>
 
 // Receiver Pins
@@ -425,8 +425,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
             function updateFlightMode(pwm) {
                 if (pwm > 1800) { modeText.textContent = "STABILIZE"; modeText.style.color = "#81a1c1"; }
-                else if (pwm < 1200) { modeText.textContent = "POSHOLD"; modeText.style.color = "#a3be8c"; }
-                else { modeText.textContent = "ALTHOLD"; modeText.style.color = "#ebcb8b"; }
+                else if (pwm < 1200) { modeText.textContent = "AUTO"; modeText.style.color = "#a3be8c"; }
+                else { modeText.textContent = "POSHOLD"; modeText.style.color = "#ebcb8b"; }
             }
 
             function getArdupilotPWM(rawPwm) {
