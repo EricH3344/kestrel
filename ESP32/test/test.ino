@@ -26,7 +26,10 @@ volatile uint32_t pulseStart[CHANNELS];
 volatile uint16_t pwmValues[CHANNELS] = {1500, 1500, 1500, 1500, 1500, 1500}; 
 portMUX_TYPE pwmMux = portMUX_INITIALIZER_UNLOCKED;
 String micasenseCaptureUrl = "http://192.168.1.83/capture";
+
 volatile bool killSwitchActive = false;
+static bool rc6_latched_state = false;
+static bool last_raw_rc6_button_state = false;
 
 // Logging System
 #define MAX_LOGS 100
@@ -534,18 +537,24 @@ void createSbusPacket(uint8_t *sbusPacket, bool *killSwitchActive)
     memcpy(snap, (void*)pwmValues, sizeof(snap));
     portEXIT_CRITICAL(&pwmMux);
 
-    uint16_t sbusData[16];
-    
-    // Detect the DXe's disarm switch state via the throttle drop
     *killSwitchActive = (snap[0] > 0 && snap[0] < 982);
+    bool current_rc6_button_pressed = (snap[5] > 1700);
 
+    if (current_rc6_button_pressed && !last_raw_rc6_button_state) {
+        rc6_latched_state = !rc6_latched_state;
+    }
+    last_raw_rc6_button_state = current_rc6_button_pressed;
+
+    uint16_t sbusData[16];
     for (int i = 0; i < 16; i++) {
         if (i < CHANNELS) {
             if (i == 0 && *killSwitchActive) {
-                // Overwrite throttle to a standard 1000us minimum (SBUS 171)
-                // This tricks ArduPilot into staying out of Throttle Failsafe mode
-                sbusData[i] = 171; 
-            } else {
+                sbusData[i] = 171;
+            } 
+            else if (i == 5) {
+                sbusData[i] = rc6_latched_state ? 1811 : 172;
+            } 
+            else {
                 sbusData[i] = constrain((snap[i] - 880) * 8 / 5, 0, 2047);
             }
         } else if (i == 7) { 
@@ -555,7 +564,7 @@ void createSbusPacket(uint8_t *sbusPacket, bool *killSwitchActive)
                 sbusData[i] = 171;
             }
         } else {
-            sbusData[i] = 992;
+            sbusData[i] = 1500;
         }
     }
 
@@ -709,9 +718,8 @@ void sbusTransmissionTask(void* pvParameters) {
 
     for (;;) {
         createSbusPacket(sbusPacket, (bool*)&killSwitchActive);
-        // Transmit via UART2
         Serial2.write(sbusPacket, 25);
-        vTaskDelay(pdMS_TO_TICKS(7));
+        vTaskDelay(pdMS_TO_TICKS(14));
     }
 }
 
