@@ -30,6 +30,8 @@ String micasenseCaptureUrl = "http://192.168.1.83/capture";
 volatile bool killSwitchActive = false;
 static bool rc6_latched_state = false;
 static bool last_raw_rc6_button_state = false;
+// SBUS task runs ~every 14ms; ignore RC6 for the first ~1.5s after boot.
+#define RC6_SETTLE_FRAMES 110
 
 // Logging System
 #define MAX_LOGS 100
@@ -106,17 +108,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 padding: 10px;
             }
 
-            .header-container {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                width: 95vw;
-                max-width: 400px;
-                margin: 10px 0;
-            }
-
-            h2 { color: #88c0d0; margin: 0; font-size: 1.1rem; letter-spacing: 2px; }
-
             #killSwitchIndicator {
                 font-size: 0.7rem;
                 padding: 4px 10px;
@@ -139,7 +130,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             .calibration-box {
                 display: grid;
                 grid-template-columns: 45px 1fr 45px;
-                grid-template-rows: auto 80px auto 20px auto; 
+                grid-template-rows: auto 110px auto 20px auto;
                 gap: 10px;
                 background: #252525;
                 padding: 20px;
@@ -186,16 +177,50 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             .mode-display {
                 grid-column: 2;
                 grid-row: 2;
-                display: flex;
-                flex-direction: column;
-                justify-content: center;
-                align-items: center;
+                display: grid;
+                grid-template-rows: 1fr auto 1fr;
+                justify-items: center;
                 background: #111;
                 border: 1px solid #383838;
                 border-radius: 4px;
+                padding: 6px 4px;
             }
 
-            #modeText { font-size: 1.1rem; font-weight: bold; color: #a3be8c; }
+            .mode-display .label { align-self: start; margin: 0; }
+            #killSwitchIndicator { align-self: end; }
+
+            .mode-content-wrapper {
+                align-self: center;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 15px;
+            }
+
+            .traffic-light {
+                display: flex;
+                flex-direction: column;
+                gap: 5px;
+                background: #050505;
+                padding: 5px 4px;
+                border-radius: 12px;
+                border: 1px solid #333;
+            }
+
+            .light-dot {
+                width: 10px;
+                height: 10px;
+                border-radius: 50%;
+                background: #222;
+                transition: all 0.2s ease-in-out;
+            }
+
+            #modeText { 
+                font-size: 1.1rem; 
+                font-weight: bold; 
+                color: #a3be8c;
+                min-width: 90px;
+            }
 
             .aux-container-inner {
                 grid-column: 1 / span 3;
@@ -296,34 +321,22 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 .dashboard-section {
                     width: 350px;
                     max-width: 350px;
-                    margin-top: 28px; /* Shifted up slightly to maximize vertical view */
+                    margin-top: 0;
                     margin-right: 15px;
                     margin-left: 0;
                     flex-shrink: 0;
                 }
 
-                .header-container {
-                    position: fixed;
-                    top: 5px;
-                    left: 15px;
-                    width: calc(100vw - 30px);
-                    max-width: none;
-                    margin: 0;
-                    z-index: 100;
-                }
-
-                h2 { font-size: 0.9rem; }
-                #killSwitchIndicator { 
-                    font-size: 0.6rem; 
-                    padding: 3px 8px; 
-                    margin-left: 15px;
+                #killSwitchIndicator {
+                    font-size: 0.6rem;
+                    padding: 3px 8px;
                 }
 
                 /* Heavily compressed layouts to stay within browser frame height */
-                .calibration-box { 
-                    padding: 10px; 
-                    gap: 4px; 
-                    grid-template-rows: auto 50px auto 0px auto; 
+                .calibration-box {
+                    padding: 10px;
+                    gap: 4px;
+                    grid-template-rows: auto 84px auto 0px auto;
                 }
                 .v-container { min-height: 100px; height: 100px; } /* Compact sliders fit any phone wrapper */
                 .h-container { height: 16px; }
@@ -334,7 +347,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     flex-direction: column;
                     flex-grow: 1;
                     max-width: 450px;
-                    margin-top: 28px;
+                    margin-top: 0;
                 }
 
                 .terminal-container {
@@ -351,11 +364,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     </head>
 
     <body>
-        <div class="header-container">
-            <h2>KESTREL Dashboard</h2>
-            <div id="killSwitchIndicator">ACTIVE</div>
-        </div>
-
         <div class="dashboard-section">
             <div class="calibration-box">
                 <div class="v-wrapper" style="grid-column: 1;">
@@ -372,7 +380,15 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
                 <div class="mode-display">
                     <div class="label">FLIGHT MODE</div>
-                    <div id="modeText">STABILIZE</div>
+                    <div class="mode-content-wrapper">
+                        <div class="traffic-light">
+                            <div id="legHigh" class="light-dot"></div>
+                            <div id="legMid" class="light-dot"></div>
+                            <div id="legLow" class="light-dot"></div>
+                        </div>
+                        <div id="modeText">STABILIZE</div>
+                    </div>
+                    <div id="killSwitchIndicator">ACTIVE</div>
                 </div>
 
                 <div class="v-wrapper" style="grid-column: 3;">
@@ -388,15 +404,15 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 </div>
 
                 <div class="aux-container-inner">
-                    <div class="h-item">
+                    <div class="h-item" style="justify-content: center;">
                         <div class="label">GEAR</div>
                         <div class="h-container"><div class="h-fill" id="gearFill"></div></div>
                         <div class="val-text" id="gearVal">1500</div>
                     </div>
-                    <div class="h-item">
-                        <div class="label">AUX1</div>
+                    <div class="h-item" style="justify-content: center;">
+                        <div class="label">AUX1 (AUTOTUNE)</div>
                         <div class="h-container"><div class="h-fill" id="aux1Fill"></div></div>
-                        <div class="val-text" id="aux1Val">1500</div>
+                        <div class="val-text" id="aux1Val">1000</div>
                     </div>
                 </div>
             </div>
@@ -416,7 +432,15 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         <script>
             var ws = new WebSocket('ws://' + location.hostname + ':81/');
             ws.binaryType = 'arraybuffer';
+            
             var modeText = document.getElementById("modeText");
+            var legLow = document.getElementById("legLow");
+            var legMid = document.getElementById("legMid");
+            var legHigh = document.getElementById("legHigh");
+
+            var currentGearPwm = 1500;
+            var currentAux1Pwm = 1000;
+
             var fields = {
                 throVal: document.getElementById("throVal"), rollVal: document.getElementById("rollVal"),
                 pitchVal: document.getElementById("pitchVal"), yawVal: document.getElementById("yawVal"),
@@ -426,10 +450,35 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 gearFill: document.getElementById("gearFill"), aux1Fill: document.getElementById("aux1Fill")
             };
 
-            function updateFlightMode(pwm) {
-                if (pwm > 1800) { modeText.textContent = "STABILIZE"; modeText.style.color = "#81a1c1"; }
-                else if (pwm < 1200) { modeText.textContent = "AUTO"; modeText.style.color = "#a3be8c"; }
-                else { modeText.textContent = "POSHOLD"; modeText.style.color = "#ebcb8b"; }
+            function resetLegend() {
+                legLow.style.background = "#222"; legLow.style.boxShadow = "none";
+                legMid.style.background = "#222"; legMid.style.boxShadow = "none";
+                legHigh.style.background = "#222"; legHigh.style.boxShadow = "none";
+            }
+
+            function updateFlightMode() {
+                resetLegend();
+
+                // Set Primary Mode State
+                if (currentGearPwm > 1800) { 
+                    legHigh.style.background = "#81a1c1"; legHigh.style.boxShadow = "0 0 8px #81a1c1";
+                }
+                else if (currentGearPwm < 1200) { 
+                    legLow.style.background = "#a3be8c"; legLow.style.boxShadow = "0 0 8px #a3be8c";
+                }
+                else { 
+                    legMid.style.background = "#ebcb8b"; legMid.style.boxShadow = "0 0 8px #ebcb8b";
+                }
+
+                // Autotune Override Logic
+                if (currentAux1Pwm > 1800) {
+                    modeText.textContent = "AUTOTUNE";
+                    modeText.style.color = "#bf616a";
+                } else {
+                    if (currentGearPwm > 1800) { modeText.textContent = "STAB"; modeText.style.color = "#81a1c1"; }
+                    else if (currentGearPwm < 1200) { modeText.textContent = "POSH"; modeText.style.color = "#a3be8c"; }
+                    else { modeText.textContent = "ALTH"; modeText.style.color = "#ebcb8b"; }
+                }
             }
 
             function getArdupilotPWM(rawPwm) {
@@ -441,14 +490,15 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             function setH(id, val) {
                 var displayVal = getArdupilotPWM(val);
                 var clamped = Math.max(1000, Math.min(2000, displayVal));
+                fields[id + "Val"].textContent = displayVal;
                 
                 var p = (id === "roll" || id === "yaw") ? 
                         1 - ((clamped - 1000) / 1000) :
                         (clamped - 1000) / 1000;
-                
-                fields[id + "Val"].textContent = displayVal;
                 fields[id + "Fill"].style.transform = "scaleX(" + p + ")";
-                if (id === "gear") updateFlightMode(displayVal);
+
+                if (id === "gear") { currentGearPwm = displayVal; updateFlightMode(); }
+                if (id === "aux1") { currentAux1Pwm = displayVal; updateFlightMode(); }
             }
 
             function setV(id, val) {
@@ -463,26 +513,13 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     var raw = new Uint8Array(e.data);
                     var d = [];
                     for (var i = 0; i < 6; i++) { d[i] = raw[i * 2] | (raw[i * 2 + 1] << 8); }
-                    var killSwitch = raw[12];
                     setV("thro", d[0]); setH("roll", d[1]);
                     setV("pitch", d[2]); setH("yaw", d[3]);
                     setH("gear", d[4]); setH("aux1", d[5]);
                     
                     var indicator = document.getElementById("killSwitchIndicator");
-                    if (killSwitch) {
-                        indicator.style.background = "#bf616a";
-                        indicator.textContent = "KILLED";
-                    } else {
-                        indicator.style.background = "#a3be8c";
-                        indicator.textContent = "ACTIVE";
-                    }
-                } else {
-                    try {
-                        const data = JSON.parse(e.data);
-                        if (data.type === 'log') {
-                            addLogEntry(data.message, data.logType || 'info');
-                        }
-                    } catch (ex) {}
+                    indicator.textContent = raw[12] ? "KILLED" : "ACTIVE";
+                    indicator.style.background = raw[12] ? "#bf616a" : "#a3be8c";
                 }
             };
 
@@ -490,24 +527,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 if (ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({type: "capture"}));
                     const btn = document.getElementById("captureBtn");
-                    const originalText = btn.innerText;
                     btn.innerText = "CAPTURING...";
-                    btn.style.background = "#a3be8c";
-                    setTimeout(() => { btn.innerText = originalText; btn.style.background = "#ebcb8b"; }, 1000);
-                }
-            }
-
-            function addLogEntry(message, type = 'info') {
-                const terminal = document.getElementById('terminalLog');
-                const entry = document.createElement('div');
-                entry.className = 'log-entry ' + type;
-                const timestamp = new Date().toLocaleTimeString();
-                entry.textContent = `[${timestamp}] ${message}`;
-                terminal.appendChild(entry);
-                terminal.scrollTop = terminal.scrollHeight;
-                
-                while (terminal.children.length > 500) {
-                    terminal.removeChild(terminal.firstChild);
+                    setTimeout(() => { btn.innerText = "CAPTURE"; }, 1000);
                 }
             }
         </script>
@@ -540,7 +561,14 @@ void createSbusPacket(uint8_t *sbusPacket, bool *killSwitchActive)
     *killSwitchActive = (snap[0] > 0 && snap[0] < 982);
     bool current_rc6_button_pressed = (snap[5] > 1700);
 
-    if (current_rc6_button_pressed && !last_raw_rc6_button_state) {
+    // Boot settle window: ignore RC6 for the first ~1.5s so transients and the
+    // RC link coming up (which can read high before the radio connects) can't
+    // fake a press. Autotune always starts OFF; only a real press after the
+    // window has elapsed will toggle it.
+    static int rc6_settle_frames = RC6_SETTLE_FRAMES;
+    if (rc6_settle_frames > 0) {
+        rc6_settle_frames--;
+    } else if (current_rc6_button_pressed && !last_raw_rc6_button_state) {
         rc6_latched_state = !rc6_latched_state;
     }
     last_raw_rc6_button_state = current_rc6_button_pressed;
@@ -701,8 +729,11 @@ void radioTask(void * pvParameters) {
 
             uint8_t payload[CHANNELS * 2 + 1];
             for (int i = 0; i < CHANNELS; i++) {
-                payload[i * 2] = snap[i] & 0xFF;
-                payload[i * 2 + 1] = (snap[i] >> 8) & 0xFF;
+                // AUX1 (ch 5) reflects the latched RC6 switch state, not the raw
+                // momentary button, so the dashboard shows AUTOTUNE as a toggle.
+                uint16_t txVal = (i == 5) ? (rc6_latched_state ? 2000 : 1000) : snap[i];
+                payload[i * 2] = txVal & 0xFF;
+                payload[i * 2 + 1] = (txVal >> 8) & 0xFF;
             }
             payload[CHANNELS * 2] = killSwitchActive ? 1 : 0;  // Add kill switch status
             webSocket.broadcastBIN(payload, sizeof(payload));
