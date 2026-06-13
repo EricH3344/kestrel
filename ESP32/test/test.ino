@@ -23,7 +23,7 @@
 // Global Variables
 const int pwmPins[CHANNELS] = {THRO, AILE, ELEV, RUDD, GEAR, AUX1};
 volatile uint32_t pulseStart[CHANNELS];
-volatile uint16_t pwmValues[CHANNELS] = {1500, 1500, 1500, 1500, 1500, 1500}; 
+volatile uint16_t pwmValues[CHANNELS] = {1500, 1500, 1500, 1500, 1500, 1000}; 
 portMUX_TYPE pwmMux = portMUX_INITIALIZER_UNLOCKED;
 String micasenseCaptureUrl = "http://192.168.1.83/capture";
 
@@ -108,15 +108,49 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 padding: 10px;
             }
 
-            #killSwitchIndicator {
-                font-size: 0.7rem;
-                padding: 4px 10px;
-                border-radius: 12px;
+            .status-header-bar {
+                display: flex;
+                width: 100%;
+                justify-content: space-between;
+                gap: 10px;
+                margin-bottom: 12px;
+            }
+
+            .status-badge {
+                flex: 1;
+                text-align: center;
+                font-size: 0.75rem;
+                padding: 6px 10px;
+                border-radius: 4px;
                 font-weight: bold;
-                background: #a3be8c;
-                color: #111;
                 text-transform: uppercase;
                 letter-spacing: 1px;
+                background: #333;
+                color: #aaa;
+                border: 1px solid #444;
+            }
+
+            #killSwitchIndicator.active {
+                background: #a3be8c;
+                color: #111;
+                border-color: #a3be8c;
+            }
+            #killSwitchIndicator.killed {
+                background: #bf616a;
+                color: #eee;
+                border-color: #bf616a;
+            }
+
+            #autotuneIndicator.active {
+                background: #bf616a;
+                color: #eee;
+                border-color: #bf616a;
+                animation: pulse-glow 2s infinite alternate;
+            }
+
+            @keyframes pulse-glow {
+                from { box-shadow: 0 0 4px rgba(191, 97, 106, 0.4); }
+                to { box-shadow: 0 0 12px rgba(191, 97, 106, 0.8); }
             }
 
             .dashboard-section {
@@ -177,49 +211,41 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             .mode-display {
                 grid-column: 2;
                 grid-row: 2;
-                display: grid;
-                grid-template-rows: 1fr auto 1fr;
-                justify-items: center;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
                 background: #111;
                 border: 1px solid #383838;
                 border-radius: 4px;
-                padding: 6px 4px;
+                padding: 8px 6px;
             }
 
-            .mode-display .label { align-self: start; margin: 0; }
-            #killSwitchIndicator { align-self: end; }
-
-            .mode-content-wrapper {
-                align-self: center;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                gap: 15px;
-            }
-
-            .traffic-light {
+            .flight-mode-switch {
                 display: flex;
                 flex-direction: column;
-                gap: 5px;
-                background: #050505;
-                padding: 5px 4px;
-                border-radius: 12px;
-                border: 1px solid #333;
+                justify-content: center;
+                gap: 6px;
+                width: 100%;
+                box-sizing: border-box;
             }
 
-            .light-dot {
-                width: 10px;
-                height: 10px;
-                border-radius: 50%;
-                background: #222;
+            .fm-row {
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                padding: 8px;
+                background: #1a1a1a;
+                border-radius: 6px;
+                border: 1px solid #333;
+                color: #555;
                 transition: all 0.2s ease-in-out;
             }
 
-            #modeText { 
-                font-size: 1.1rem; 
+            .fm-name { 
+                font-size: 11px; 
                 font-weight: bold; 
-                color: #a3be8c;
-                min-width: 90px;
+                letter-spacing: 1px;
+                text-transform: uppercase;
             }
 
             .aux-container-inner {
@@ -232,7 +258,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 padding-top: 15px;
             }
 
-            .label { font-size: 9px; font-weight: bold; color: #88c0d0; margin-bottom: 4px; text-transform: uppercase; }
+            .label { font-size: 9px; font-weight: bold; color: #88c0d0; margin-bottom: 4px; text-transform: uppercase; text-align: center;}
             .val-text { font-size: 10px; margin-top: 4px; color: #ebcb8b; }
 
             .log-panel {
@@ -302,18 +328,13 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             .terminal-log::-webkit-scrollbar-track { background: #1a1a1a; }
             .terminal-log::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
 
-            .log-entry { margin: 2px 0; }
-            .log-entry.capture { color: #a3be8c; }
-            .log-entry.error { color: #bf616a; }
-            .log-entry.info { color: #88c0d0; }
-
             /* Landscape View Adjustments */
             @media (max-height: 500px) and (orientation: landscape) {
                 body {
                     flex-direction: row;
                     padding: 8px;
                     overflow-x: auto;
-                    overflow-y: auto; /* Scrolling is safely left active if needed */
+                    overflow-y: auto;
                     align-items: flex-start;
                     justify-content: flex-start;
                 }
@@ -327,22 +348,28 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     flex-shrink: 0;
                 }
 
-                #killSwitchIndicator {
-                    font-size: 0.6rem;
-                    padding: 3px 8px;
+                .status-header-bar {
+                    margin-bottom: 6px;
                 }
 
-                /* Heavily compressed layouts to stay within browser frame height */
+                .status-badge {
+                    font-size: 0.65rem;
+                    padding: 4px 6px;
+                }
+
                 .calibration-box {
                     padding: 10px;
                     gap: 4px;
                     grid-template-rows: auto 84px auto 0px auto;
                 }
-                .v-container { min-height: 100px; height: 100px; } /* Compact sliders fit any phone wrapper */
+                .v-container { min-height: 100px; height: 100px; } 
                 .h-container { height: 16px; }
                 .aux-container-inner { padding-top: 6px; gap: 6px; }
 
-                /* Right Column Configuration */
+                .flight-mode-switch { gap: 4px; }
+                .fm-row { padding: 6px; border-radius: 4px; }
+                .fm-name { font-size: 9px; }
+
                 .log-panel {
                     flex-direction: column;
                     flex-grow: 1;
@@ -352,7 +379,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
                 .terminal-container {
                     margin-top: 0;
-                    height: 110px; /* Shortened to balance directly with the telemetry box */
+                    height: 110px;
                 }
                 .terminal-header { font-size: 9px; }
                 .terminal-log { font-size: 9px; }
@@ -365,6 +392,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
     <body>
         <div class="dashboard-section">
+            <div class="status-header-bar">
+                <div id="killSwitchIndicator" class="status-badge active">ACTIVE</div>
+                <div id="autotuneIndicator" class="status-badge">AUTOTUNE OFF</div>
+            </div>
+
             <div class="calibration-box">
                 <div class="v-wrapper" style="grid-column: 1;">
                     <div class="label">PITCH</div>
@@ -379,16 +411,17 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 </div>
 
                 <div class="mode-display">
-                    <div class="label">FLIGHT MODE</div>
-                    <div class="mode-content-wrapper">
-                        <div class="traffic-light">
-                            <div id="legHigh" class="light-dot"></div>
-                            <div id="legMid" class="light-dot"></div>
-                            <div id="legLow" class="light-dot"></div>
+                    <div class="flight-mode-switch">
+                        <div id="rowStab" class="fm-row">
+                            <span class="fm-name">Stabilize</span>
                         </div>
-                        <div id="modeText">STABILIZE</div>
+                        <div id="rowAlth" class="fm-row">
+                            <span class="fm-name">Althold</span>
+                        </div>
+                        <div id="rowPosh" class="fm-row">
+                            <span class="fm-name">Poshold</span>
+                        </div>
                     </div>
-                    <div id="killSwitchIndicator">ACTIVE</div>
                 </div>
 
                 <div class="v-wrapper" style="grid-column: 3;">
@@ -433,10 +466,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             var ws = new WebSocket('ws://' + location.hostname + ':81/');
             ws.binaryType = 'arraybuffer';
             
-            var modeText = document.getElementById("modeText");
-            var legLow = document.getElementById("legLow");
-            var legMid = document.getElementById("legMid");
-            var legHigh = document.getElementById("legHigh");
+            var autotuneIndicator = document.getElementById("autotuneIndicator");
+            var killSwitchIndicator = document.getElementById("killSwitchIndicator");
+            var rowStab = document.getElementById("rowStab");
+            var rowAlth = document.getElementById("rowAlth");
+            var rowPosh = document.getElementById("rowPosh");
 
             var currentGearPwm = 1500;
             var currentAux1Pwm = 1000;
@@ -450,34 +484,39 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 gearFill: document.getElementById("gearFill"), aux1Fill: document.getElementById("aux1Fill")
             };
 
-            function resetLegend() {
-                legLow.style.background = "#222"; legLow.style.boxShadow = "none";
-                legMid.style.background = "#222"; legMid.style.boxShadow = "none";
-                legHigh.style.background = "#222"; legHigh.style.boxShadow = "none";
+            function resetModeSwitch() {
+                rowStab.style.borderColor = "#333"; rowStab.style.color = "#555"; rowStab.style.boxShadow = "none";
+                rowAlth.style.borderColor = "#333"; rowAlth.style.color = "#555"; rowAlth.style.boxShadow = "none";
+                rowPosh.style.borderColor = "#333"; rowPosh.style.color = "#555"; rowPosh.style.boxShadow = "none";
             }
 
             function updateFlightMode() {
-                resetLegend();
+                resetModeSwitch();
 
-                // Set Primary Mode State
+                // Base Physical Switch Position (GEAR)
                 if (currentGearPwm > 1800) { 
-                    legHigh.style.background = "#81a1c1"; legHigh.style.boxShadow = "0 0 8px #81a1c1";
+                    rowStab.style.borderColor = "#81a1c1"; 
+                    rowStab.style.color = "#81a1c1"; 
+                    rowStab.style.boxShadow = "0 0 8px rgba(129, 161, 193, 0.4)";
                 }
                 else if (currentGearPwm < 1200) { 
-                    legLow.style.background = "#a3be8c"; legLow.style.boxShadow = "0 0 8px #a3be8c";
+                    rowPosh.style.borderColor = "#a3be8c"; 
+                    rowPosh.style.color = "#a3be8c"; 
+                    rowPosh.style.boxShadow = "0 0 8px rgba(163, 190, 140, 0.4)";
                 }
                 else { 
-                    legMid.style.background = "#ebcb8b"; legMid.style.boxShadow = "0 0 8px #ebcb8b";
+                    rowAlth.style.borderColor = "#ebcb8b"; 
+                    rowAlth.style.color = "#ebcb8b"; 
+                    rowAlth.style.boxShadow = "0 0 8px rgba(235, 203, 139, 0.4)";
                 }
 
-                // Autotune Override Logic
+                // Autotune Global Status Update (Active Low Match)
                 if (currentAux1Pwm > 1800) {
-                    modeText.textContent = "AUTOTUNE";
-                    modeText.style.color = "#bf616a";
+                    autotuneIndicator.textContent = "AUTOTUNE ACTIVE";
+                    autotuneIndicator.classList.add("active");
                 } else {
-                    if (currentGearPwm > 1800) { modeText.textContent = "STAB"; modeText.style.color = "#81a1c1"; }
-                    else if (currentGearPwm < 1200) { modeText.textContent = "POSH"; modeText.style.color = "#a3be8c"; }
-                    else { modeText.textContent = "ALTH"; modeText.style.color = "#ebcb8b"; }
+                    autotuneIndicator.textContent = "AUTOTUNE OFF";
+                    autotuneIndicator.classList.remove("active");
                 }
             }
 
@@ -509,7 +548,25 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             }
 
             ws.onmessage = function(e) {
-                if (e.data instanceof ArrayBuffer) {
+                // Handle Text Messages (System Logs)
+                if (typeof e.data === 'string') {
+                    try {
+                        var obj = JSON.parse(e.data);
+                        if (obj.type === "log") {
+                            var term = document.getElementById("terminalLog");
+                            
+                            // Append log message with a newline
+                            term.textContent += obj.message + "\n";
+                            
+                            // Auto-scroll to the bottom of the log panel
+                            term.scrollTop = term.scrollHeight;
+                        }
+                    } catch(err) {
+                        console.error("Failed to parse text WebSocket frame:", err);
+                    }
+                } 
+                // Handle Binary Messages (Telemetry Frames)
+                else if (e.data instanceof ArrayBuffer) {
                     var raw = new Uint8Array(e.data);
                     var d = [];
                     for (var i = 0; i < 6; i++) { d[i] = raw[i * 2] | (raw[i * 2 + 1] << 8); }
@@ -517,9 +574,13 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     setV("pitch", d[2]); setH("yaw", d[3]);
                     setH("gear", d[4]); setH("aux1", d[5]);
                     
-                    var indicator = document.getElementById("killSwitchIndicator");
-                    indicator.textContent = raw[12] ? "KILLED" : "ACTIVE";
-                    indicator.style.background = raw[12] ? "#bf616a" : "#a3be8c";
+                    if (raw[12]) {
+                        killSwitchIndicator.textContent = "KILLED";
+                        killSwitchIndicator.className = "status-badge killed";
+                    } else {
+                        killSwitchIndicator.textContent = "ACTIVE";
+                        killSwitchIndicator.className = "status-badge active";
+                    }
                 }
             };
 
@@ -561,10 +622,6 @@ void createSbusPacket(uint8_t *sbusPacket, bool *killSwitchActive)
     *killSwitchActive = (snap[0] > 0 && snap[0] < 982);
     bool current_rc6_button_pressed = (snap[5] > 1700);
 
-    // Boot settle window: ignore RC6 for the first ~1.5s so transients and the
-    // RC link coming up (which can read high before the radio connects) can't
-    // fake a press. Autotune always starts OFF; only a real press after the
-    // window has elapsed will toggle it.
     static int rc6_settle_frames = RC6_SETTLE_FRAMES;
     if (rc6_settle_frames > 0) {
         rc6_settle_frames--;
@@ -729,13 +786,11 @@ void radioTask(void * pvParameters) {
 
             uint8_t payload[CHANNELS * 2 + 1];
             for (int i = 0; i < CHANNELS; i++) {
-                // AUX1 (ch 5) reflects the latched RC6 switch state, not the raw
-                // momentary button, so the dashboard shows AUTOTUNE as a toggle.
-                uint16_t txVal = (i == 5) ? (rc6_latched_state ? 2000 : 1000) : snap[i];
+                uint16_t txVal = (i == 5) ? (rc6_latched_state ? 1000 : 2000) : snap[i];
                 payload[i * 2] = txVal & 0xFF;
                 payload[i * 2 + 1] = (txVal >> 8) & 0xFF;
             }
-            payload[CHANNELS * 2] = killSwitchActive ? 1 : 0;  // Add kill switch status
+            payload[CHANNELS * 2] = killSwitchActive ? 1 : 0;
             webSocket.broadcastBIN(payload, sizeof(payload));
         }
         vTaskDelay(pdMS_TO_TICKS(1));
