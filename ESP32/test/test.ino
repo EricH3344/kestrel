@@ -716,31 +716,20 @@ void radioTask(void * pvParameters) {
     Serial.println(WiFi.softAPIP());
     addLog("AP Started: " + WiFi.softAPIP().toString());
     
-    Serial.println("Connecting to camera network...");
-    addLog("Connecting to camera network...");
-
+    // Kick off the camera-network connection in the BACKGROUND. We do NOT block
+    // here: the web server and (on the other core) the SBUS/RC path come up
+    // immediately. Connection progress is monitored in the for(;;) loop below.
+    // If the camera isn't found within wifiTimeout we stop the STA radio, since
+    // continuously scanning while STA is unconnected disturbs the timing-critical
+    // PWM capture and SBUS output (the RC link).
+    Serial.println("Connecting to camera network (background)...");
+    addLog("Connecting to camera network (background)...");
+    WiFi.setAutoReconnect(true);
     WiFi.begin(sta_ssid, sta_password);
-    
-    unsigned long startAttemptTime = millis();
+
+    unsigned long staStartTime = millis();
     const unsigned long wifiTimeout = 60000;
-
-    while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < wifiTimeout) {
-        vTaskDelay(pdMS_TO_TICKS(500));
-        Serial.print(".");
-    }
-    
-    Serial.println();
-
-    if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("Connected to camera network.");
-        addLog("Camera network connected!");
-        WiFi.setAutoReconnect(true);
-    } else {
-        Serial.println("Camera not found.");
-        addLog("Camera network connection failed - using AP only");
-        WiFi.disconnect(true);
-        WiFi.mode(WIFI_AP);
-    }
+    bool staPending = true;
 
     server.on("/", []() { server.send_P(200, "text/html", INDEX_HTML); });
     server.onNotFound([]() { server.send_P(200, "text/html", INDEX_HTML); });
@@ -783,6 +772,22 @@ void radioTask(void * pvParameters) {
         server.handleClient();
         webSocket.loop();
 
+        // Background camera-network connection monitor (non-blocking).
+        if (staPending) {
+            if (WiFi.status() == WL_CONNECTED) {
+                staPending = false;
+                Serial.println("Connected to camera network.");
+                addLog("Camera network connected! " + WiFi.localIP().toString());
+            } else if (millis() - staStartTime > wifiTimeout) {
+                staPending = false;
+                Serial.println("Camera not found - using AP only.");
+                addLog("Camera network connection failed - using AP only");
+                // Stop scanning so STA radio activity no longer disturbs the RC link.
+                WiFi.setAutoReconnect(false);
+                WiFi.disconnect(true);
+                WiFi.mode(WIFI_AP);
+            }
+        }
 
         // Broadcast telemetry to dashboard every 5ms
         if (connectedClients > 0 && (millis() - lastBroadcast > 5)) {
