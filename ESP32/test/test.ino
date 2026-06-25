@@ -4,8 +4,8 @@
 #include <HTTPClient.h>
 
 // Receiver Pins
-#define THRO 34
-#define AILE 35
+#define THRO 13
+#define AILE 14
 #define ELEV 32
 #define RUDD 33
 #define GEAR 25
@@ -16,6 +16,10 @@
 
 // SBUS Output Pin
 #define SBUS 4
+
+// Snap sticks within this many us of center (1500) to exactly 1500 so tiny RC
+// jitter isn't read as pilot input (prevents AutoTune "pilot controlling").
+#define CENTER_DEADBAND 25
 
 // Camera Trigger Pin
 #define CAM_TRIGGER 27
@@ -640,7 +644,12 @@ void createSbusPacket(uint8_t *sbusPacket, bool *killSwitchActive)
                 sbusData[i] = rc6_latched_state ? 1811 : 172;
             } 
             else {
-                sbusData[i] = constrain((snap[i] - 880) * 8 / 5, 0, 2047);
+                uint16_t pwm = snap[i];
+                if ((i == 1 || i == 2 || i == 3) &&
+                    pwm > (1500 - CENTER_DEADBAND) && pwm < (1500 + CENTER_DEADBAND)) {
+                    pwm = 1500;
+                }
+                sbusData[i] = constrain((pwm - 880) * 8 / 5, 0, 2047);
             }
         } else if (i == 7) { 
             if (*killSwitchActive) {
@@ -713,7 +722,7 @@ void radioTask(void * pvParameters) {
     WiFi.begin(sta_ssid, sta_password);
     
     unsigned long startAttemptTime = millis();
-    const unsigned long wifiTimeout = 10000;
+    const unsigned long wifiTimeout = 60000;
 
     while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < wifiTimeout) {
         vTaskDelay(pdMS_TO_TICKS(500));
@@ -801,10 +810,39 @@ void radioTask(void * pvParameters) {
 void sbusTransmissionTask(void* pvParameters) {
     Serial2.begin(100000, SERIAL_8E2, 16, SBUS, true);
     uint8_t sbusPacket[25];
+    uint32_t lastPacketLog = 0;
 
     for (;;) {
         createSbusPacket(sbusPacket, (bool*)&killSwitchActive);
         Serial2.write(sbusPacket, 25);
+
+        // Throttled decode of the SBUS frame into readable channel values
+        // (~5 Hz) so serial isn't flooded.
+        if (millis() - lastPacketLog > 200) {
+            lastPacketLog = millis();
+
+            // Unpack the 16 little-endian 11-bit channels from the frame.
+            uint16_t ch[16];
+            for (int i = 0; i < 16; i++) {
+                int bitPos = i * 11;
+                int byteIdx = 1 + (bitPos / 8);
+                int bitIdx = bitPos % 8;
+                uint32_t v = sbusPacket[byteIdx] |
+                             (sbusPacket[byteIdx + 1] << 8) |
+                             (sbusPacket[byteIdx + 2] << 16);
+                ch[i] = (v >> bitIdx) & 0x07FF;
+            }
+
+            // ArduPilot maps SBUS 172->1000us and 1811->2000us.
+            // Serial.printf("SBUS us -> THRO:%d AILE:%d ELEV:%d RUDD:%d GEAR:%d AUX1:%d\n",
+            //     (int)((ch[0] - 172) * 1000 / 1639 + 1000),
+            //     (int)((ch[1] - 172) * 1000 / 1639 + 1000),
+            //     (int)((ch[2] - 172) * 1000 / 1639 + 1000),
+            //     (int)((ch[3] - 172) * 1000 / 1639 + 1000),
+            //     (int)((ch[4] - 172) * 1000 / 1639 + 1000),
+            //     (int)((ch[5] - 172) * 1000 / 1639 + 1000));
+        }
+
         vTaskDelay(pdMS_TO_TICKS(14));
     }
 }
@@ -826,7 +864,7 @@ void setup() {
     vTaskDelay(pdMS_TO_TICKS(500));
 
     for (int i = 0; i < CHANNELS; i++) {
-        pinMode(pwmPins[i], INPUT);
+        pinMode(pwmPins[i], INPUT_PULLDOWN);
     }
     
     attachInterrupt(digitalPinToInterrupt(THRO), pwmISR0, CHANGE);
