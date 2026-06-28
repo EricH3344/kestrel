@@ -1,23 +1,4 @@
-// Receiver Pins
-#define THRO 13
-#define AILE 14
-#define ELEV 32
-#define RUDD 33
-#define GEAR 25
-#define AUX1 26
-
-// Number of Channels
-#define CHANNELS 6
-
-// SBUS Output Pin
-#define SBUS 4
-
-// Snap sticks within this many us of center (1500) to exactly 1500 so tiny RC
-// jitter isn't read as pilot input (prevents AutoTune "pilot controlling").
-#define CENTER_DEADBAND 25
-
-// Camera Trigger Pin
-#define CAM_TRIGGER 27
+#include "config.h"
 
 // Global Variables
 const int pwmPins[CHANNELS] = {THRO, AILE, ELEV, RUDD, GEAR, AUX1};
@@ -27,8 +8,8 @@ portMUX_TYPE pwmMux = portMUX_INITIALIZER_UNLOCKED;
 String micasenseCaptureUrl = "http://192.168.1.83/capture";
 
 volatile bool killSwitchActive = false;
-static bool rc6_latched_state = false;
-static bool last_raw_rc6_button_state = false;
+bool rc6_latched_state = false;
+bool last_raw_rc6_button_state = false;
 // SBUS task runs ~every 14ms; ignore RC6 for the first ~1.5s after boot.
 #define RC6_SETTLE_FRAMES 110
 

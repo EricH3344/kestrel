@@ -1,3 +1,5 @@
+#include "config.h"
+
 void createSbusPacket(uint8_t *sbusPacket, bool *killSwitchActive) {
     memset(sbusPacket, 0, 25);
     sbusPacket[0] = 0x0F;

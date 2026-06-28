@@ -3,6 +3,8 @@
 #include "src/WebSockets/src/WebSocketsServer.h"
 #include <HTTPClient.h>
 
+#include "config.h"
+
 void setup() {
     Serial.begin(115200);
     vTaskDelay(pdMS_TO_TICKS(500));
@@ -21,13 +23,13 @@ void setup() {
 
     pinMode(CAM_TRIGGER, INPUT_PULLUP);
 
-    if (xTaskCreatePinnedToCore(networkTask, "Network Task", 12288, NULL, 4, &NetworkTask, 0) != pdPASS) {
+    if (xTaskCreatePinnedToCore(networkTask, "Network Task", 12288, NULL, 2, &NetworkTask, 0) != pdPASS) {
         Serial.println("NETWORK FAILURE: Restarting...");
         delay(2000);
         ESP.restart();
     }
 
-    if (xTaskCreatePinnedToCore(sbusTransmissionTask, "SBUS Transmission Task", 8192, NULL, 5, &SBUSTransmissionTask, 1) != pdPASS) {
+    if (xTaskCreatePinnedToCore(sbusTransmissionTask, "SBUS Transmission Task", 8192, NULL, 6, &SBUSTransmissionTask, 1) != pdPASS) {
         Serial.println("TRANSMISSION FAILURE: Restarting...");
         delay(2000);
         ESP.restart();

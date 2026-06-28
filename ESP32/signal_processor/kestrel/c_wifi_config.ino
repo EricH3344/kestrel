@@ -1,3 +1,5 @@
+#include "config.h"
+
 void networkTask(void * pvParameters) {
     WiFi.mode(WIFI_AP_STA);
     WiFi.softAP(ssid, password, 1, false, 4);
@@ -5,15 +7,7 @@ void networkTask(void * pvParameters) {
     Serial.println(WiFi.softAPIP());
     addLog("AP Started: " + WiFi.softAPIP().toString());
 
-    WiFi.setAutoReconnect(true);
-    WiFi.begin(sta_ssid, sta_password);
-
-    unsigned long staStartTime = millis();
-    const unsigned long wifiTimeout = 60000;
-    const unsigned long reconnectInterval = 10000;
-    unsigned long lastReconnectAttempt = 0;
-    bool staConnected = false;
-    bool slowCameraWarningLogged = false;
+    WiFi.setAutoReconnect(false);
 
     server.on("/", []() { server.send_P(200, "text/html", INDEX_HTML); });
     server.onNotFound([]() { server.send_P(200, "text/html", INDEX_HTML); });
@@ -56,34 +50,7 @@ void networkTask(void * pvParameters) {
         server.handleClient();
         webSocket.loop();
 
-        if (WiFi.status() == WL_CONNECTED) {
-            if (!staConnected) {
-                staConnected = true;
-                slowCameraWarningLogged = false;
-                Serial.println("Connected to camera network.");
-                addLog("Camera network connected! " + WiFi.localIP().toString());
-            }
-        } else {
-            if (staConnected) {
-                staConnected = false;
-                addLog("Camera network connection lost; retrying...");
-            }
-
-            if (millis() - lastReconnectAttempt > reconnectInterval) {
-                lastReconnectAttempt = millis();
-                WiFi.disconnect(true);
-                WiFi.begin(sta_ssid, sta_password);
-                Serial.println("Retrying camera network connection...");
-            }
-
-            if (!staConnected && millis() - staStartTime > wifiTimeout && !slowCameraWarningLogged) {
-                slowCameraWarningLogged = true;
-                Serial.println("Camera network still booting; continuing to retry in background.");
-                addLog("Camera network still booting; continuing to retry in background");
-            }
-        }
-
-        if (connectedClients > 0 && (millis() - lastBroadcast > 5)) {
+        if (connectedClients > 0 && (millis() - lastBroadcast > 50)) {
             lastBroadcast = millis();
             uint16_t snap[CHANNELS];
             portENTER_CRITICAL(&pwmMux);
@@ -100,6 +67,6 @@ void networkTask(void * pvParameters) {
             webSocket.broadcastBIN(payload, sizeof(payload));
         }
 
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
 }

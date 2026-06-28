@@ -29,8 +29,24 @@ void imageCaptureTask(void * pvParameters) {
         uint32_t threadNotification = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
         if (threadNotification > 0) {
-            sendCaptureRequest(micasenseCaptureUrl);
-            vTaskDelay(pdMS_TO_TICKS(50));
+            WiFi.mode(WIFI_AP_STA);
+            WiFi.setAutoReconnect(false);
+            WiFi.begin(sta_ssid, sta_password);
+
+            unsigned long startTime = millis();
+            while (WiFi.status() != WL_CONNECTED && millis() - startTime < 5000) {
+                vTaskDelay(pdMS_TO_TICKS(100));
+            }
+
+            if (WiFi.status() == WL_CONNECTED) {
+                addLog("Camera network connected for capture");
+                sendCaptureRequest(micasenseCaptureUrl);
+            } else {
+                addLog("Camera unavailable; skipping capture");
+            }
+
+            WiFi.disconnect(true);
+            vTaskDelay(pdMS_TO_TICKS(20));
         }
     }
 }
