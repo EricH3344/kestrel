@@ -1,99 +1,3 @@
-#include <WiFi.h>
-#include <WebServer.h>
-#include "src/WebSockets/src/WebSocketsServer.h"
-#include <HTTPClient.h>
-
-// Receiver Pins
-#define THRO 13
-#define AILE 14
-#define ELEV 32
-#define RUDD 33
-#define GEAR 25
-#define AUX1 26
-
-// Number of Channels
-#define CHANNELS 6
-
-// SBUS Output Pin
-#define SBUS 4
-
-// Snap sticks within this many us of center (1500) to exactly 1500 so tiny RC
-// jitter isn't read as pilot input (prevents AutoTune "pilot controlling").
-#define CENTER_DEADBAND 25
-
-// Camera Trigger Pin
-#define CAM_TRIGGER 27
-
-// Global Variables
-const int pwmPins[CHANNELS] = {THRO, AILE, ELEV, RUDD, GEAR, AUX1};
-volatile uint32_t pulseStart[CHANNELS];
-volatile uint16_t pwmValues[CHANNELS] = {1500, 1500, 1500, 1500, 1500, 1000}; 
-portMUX_TYPE pwmMux = portMUX_INITIALIZER_UNLOCKED;
-String micasenseCaptureUrl = "http://192.168.1.83/capture";
-
-volatile bool killSwitchActive = false;
-static bool rc6_latched_state = false;
-static bool last_raw_rc6_button_state = false;
-// SBUS task runs ~every 14ms; ignore RC6 for the first ~1.5s after boot.
-#define RC6_SETTLE_FRAMES 110
-
-// Logging System
-#define MAX_LOGS 100
-String logBuffer[MAX_LOGS];
-int logIndex = 0;
-portMUX_TYPE logMux = portMUX_INITIALIZER_UNLOCKED;
-
-// FreeRTOS Task Handles
-TaskHandle_t RadioTask;
-TaskHandle_t SBUSTransmissionTask;
-TaskHandle_t ImageCaptureTask;
-
-// ISR for PWM Capture
-void IRAM_ATTR handlePWM(int ch) {
-    uint32_t currentMicros = micros();
-    if (gpio_get_level((gpio_num_t)pwmPins[ch]) == 1) {
-        pulseStart[ch] = currentMicros;
-    } 
-    else {
-        uint32_t width = currentMicros - pulseStart[ch];
-        if (width >= 900 && width <= 2100) {
-            portENTER_CRITICAL_ISR(&pwmMux);
-            pwmValues[ch] = width;
-            portEXIT_CRITICAL_ISR(&pwmMux);
-        }
-    }
-}
-
-// ISR for PixHawk captuire trigger
-void IRAM_ATTR onCameraTrigger() {
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-
-    vTaskNotifyGiveFromISR(ImageCaptureTask, &xHigherPriorityTaskWoken);
-    if (xHigherPriorityTaskWoken) {
-        portYIELD_FROM_ISR();
-    }
-}
-
-// Separate wrappers for each channel for attachInterrupt
-void IRAM_ATTR pwmISR0(){ handlePWM(0); }
-void IRAM_ATTR pwmISR1(){ handlePWM(1); }
-void IRAM_ATTR pwmISR2(){ handlePWM(2); }
-void IRAM_ATTR pwmISR3(){ handlePWM(3); }
-void IRAM_ATTR pwmISR4(){ handlePWM(4); }
-void IRAM_ATTR pwmISR5(){ handlePWM(5); }
-
-// Hotspot Configuration
-const char* ssid = "KESTREL_AP";
-const char* password = "123456789";
-volatile int connectedClients = 0;
-
-// Micasense Network Configuration
-const char* sta_ssid = "rededgeRX04-2206064-SC";
-const char* sta_password = "micasense";
-
-WebServer server(80);
-WebSocketsServer webSocket = WebSocketsServer(81);
-
 const char INDEX_HTML[] PROGMEM = R"rawliteral(
     <!DOCTYPE html>
     <html>
@@ -178,18 +82,18 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 box-sizing: border-box;
             }
 
-            .v-wrapper { 
+            .v-wrapper {
                 grid-row: 1 / span 3;
-                display: flex; 
-                flex-direction: column; 
-                align-items: center; 
+                display: flex;
+                flex-direction: column;
+                align-items: center;
                 justify-content: space-between;
             }
-            
+
             .v-container {
                 width: 25px;
                 height: 100%;
-                min-height: 220px; 
+                min-height: 220px;
                 background: #000;
                 position: relative;
                 border: 1px solid #444;
@@ -211,7 +115,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
             .h-fill { height: 100%; background: #81a1c1; width: 100%; transform-origin: left; transform: scaleX(0.5); }
             .line-h { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: #bf616a; z-index: 10; transform: translateX(-50%); }
-            
+
             .mode-display {
                 grid-column: 2;
                 grid-row: 2;
@@ -245,9 +149,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 transition: all 0.2s ease-in-out;
             }
 
-            .fm-name { 
-                font-size: 11px; 
-                font-weight: bold; 
+            .fm-name {
+                font-size: 11px;
+                font-weight: bold;
                 letter-spacing: 1px;
                 text-transform: uppercase;
             }
@@ -332,7 +236,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             .terminal-log::-webkit-scrollbar-track { background: #1a1a1a; }
             .terminal-log::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
 
-            /* Landscape View Adjustments */
             @media (max-height: 500px) and (orientation: landscape) {
                 body {
                     flex-direction: row;
@@ -366,7 +269,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     gap: 4px;
                     grid-template-rows: auto 84px auto 0px auto;
                 }
-                .v-container { min-height: 100px; height: 100px; } 
+                .v-container { min-height: 100px; height: 100px; }
                 .h-container { height: 16px; }
                 .aux-container-inner { padding-top: 6px; gap: 6px; }
 
@@ -469,7 +372,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         <script>
             var ws = new WebSocket('ws://' + location.hostname + ':81/');
             ws.binaryType = 'arraybuffer';
-            
+
             var autotuneIndicator = document.getElementById("autotuneIndicator");
             var killSwitchIndicator = document.getElementById("killSwitchIndicator");
             var rowStab = document.getElementById("rowStab");
@@ -497,24 +400,22 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             function updateFlightMode() {
                 resetModeSwitch();
 
-                // Base Physical Switch Position (GEAR)
-                if (currentGearPwm > 1800) { 
-                    rowStab.style.borderColor = "#81a1c1"; 
-                    rowStab.style.color = "#81a1c1"; 
+                if (currentGearPwm > 1800) {
+                    rowStab.style.borderColor = "#81a1c1";
+                    rowStab.style.color = "#81a1c1";
                     rowStab.style.boxShadow = "0 0 8px rgba(129, 161, 193, 0.4)";
                 }
-                else if (currentGearPwm < 1200) { 
-                    rowPosh.style.borderColor = "#a3be8c"; 
-                    rowPosh.style.color = "#a3be8c"; 
+                else if (currentGearPwm < 1200) {
+                    rowPosh.style.borderColor = "#a3be8c";
+                    rowPosh.style.color = "#a3be8c";
                     rowPosh.style.boxShadow = "0 0 8px rgba(163, 190, 140, 0.4)";
                 }
-                else { 
-                    rowAlth.style.borderColor = "#ebcb8b"; 
-                    rowAlth.style.color = "#ebcb8b"; 
+                else {
+                    rowAlth.style.borderColor = "#ebcb8b";
+                    rowAlth.style.color = "#ebcb8b";
                     rowAlth.style.boxShadow = "0 0 8px rgba(235, 203, 139, 0.4)";
                 }
 
-                // Autotune Global Status Update (Active Low Match)
                 if (currentAux1Pwm > 1800) {
                     autotuneIndicator.textContent = "AUTOTUNE ACTIVE";
                     autotuneIndicator.classList.add("active");
@@ -534,8 +435,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 var displayVal = getArdupilotPWM(val);
                 var clamped = Math.max(1000, Math.min(2000, displayVal));
                 fields[id + "Val"].textContent = displayVal;
-                
-                var p = (id === "roll" || id === "yaw") ? 
+
+                var p = (id === "roll" || id === "yaw") ?
                         1 - ((clamped - 1000) / 1000) :
                         (clamped - 1000) / 1000;
                 fields[id + "Fill"].style.transform = "scaleX(" + p + ")";
@@ -552,24 +453,18 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             }
 
             ws.onmessage = function(e) {
-                // Handle Text Messages (System Logs)
                 if (typeof e.data === 'string') {
                     try {
                         var obj = JSON.parse(e.data);
                         if (obj.type === "log") {
                             var term = document.getElementById("terminalLog");
-                            
-                            // Append log message with a newline
                             term.textContent += obj.message + "\n";
-                            
-                            // Auto-scroll to the bottom of the log panel
                             term.scrollTop = term.scrollHeight;
                         }
                     } catch(err) {
                         console.error("Failed to parse text WebSocket frame:", err);
                     }
-                } 
-                // Handle Binary Messages (Telemetry Frames)
+                }
                 else if (e.data instanceof ArrayBuffer) {
                     var raw = new Uint8Array(e.data);
                     var d = [];
@@ -577,7 +472,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     setV("thro", d[0]); setH("roll", d[1]);
                     setV("pitch", d[2]); setH("yaw", d[3]);
                     setH("gear", d[4]); setH("aux1", d[5]);
-                    
+
                     if (raw[12]) {
                         killSwitchIndicator.textContent = "KILLED";
                         killSwitchIndicator.className = "status-badge killed";
@@ -600,306 +495,3 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     </body>
     </html>
 )rawliteral";
-
-void addLog(const String &message) {
-    portENTER_CRITICAL(&logMux);
-    logBuffer[logIndex] = message;
-    logIndex = (logIndex + 1) % MAX_LOGS;
-    portEXIT_CRITICAL(&logMux);
-    
-    if (connectedClients > 0) {
-        String jsonLog = "{\"type\":\"log\",\"message\":\"" + message + "\"}";
-        webSocket.broadcastTXT(jsonLog);
-    }
-}
-
-void createSbusPacket(uint8_t *sbusPacket, bool *killSwitchActive) 
-{
-    memset(sbusPacket, 0, 25);
-    sbusPacket[0] = 0x0F;
-
-    uint16_t snap[CHANNELS];
-    portENTER_CRITICAL(&pwmMux);
-    memcpy(snap, (void*)pwmValues, sizeof(snap));
-    portEXIT_CRITICAL(&pwmMux);
-
-    *killSwitchActive = (snap[0] > 0 && snap[0] < 982);
-    bool current_rc6_button_pressed = (snap[5] > 1700);
-
-    static int rc6_settle_frames = RC6_SETTLE_FRAMES;
-    if (rc6_settle_frames > 0) {
-        rc6_settle_frames--;
-    } else if (current_rc6_button_pressed && !last_raw_rc6_button_state) {
-        rc6_latched_state = !rc6_latched_state;
-    }
-    last_raw_rc6_button_state = current_rc6_button_pressed;
-
-    uint16_t sbusData[16];
-    for (int i = 0; i < 16; i++) {
-        if (i < CHANNELS) {
-            if (i == 0 && *killSwitchActive) {
-                sbusData[i] = 171;
-            } 
-            else if (i == 5) {
-                sbusData[i] = rc6_latched_state ? 1811 : 172;
-            } 
-            else {
-                uint16_t pwm = snap[i];
-                if ((i == 1 || i == 2 || i == 3) &&
-                    pwm > (1500 - CENTER_DEADBAND) && pwm < (1500 + CENTER_DEADBAND)) {
-                    pwm = 1500;
-                }
-                sbusData[i] = constrain((pwm - 880) * 8 / 5, 0, 2047);
-            }
-        } else if (i == 7) { 
-            if (*killSwitchActive) {
-                sbusData[i] = 1792;
-            } else {
-                sbusData[i] = 171;
-            }
-        } else {
-            sbusData[i] = 1500;
-        }
-    }
-
-    int byteIdx = 1;
-    int bitIdx = 0;
-    for (int i = 0; i < 16; i++) {
-        uint16_t chValue = sbusData[i] & 0x07FF;
-        for (int b = 0; b < 11; b++) {
-            if (chValue & (1 << b)) {
-                sbusPacket[byteIdx] |= (1 << bitIdx);
-            }
-            bitIdx++;
-            if (bitIdx >= 8) {
-                bitIdx = 0;
-                byteIdx++;
-            }
-        }
-    }
-
-    sbusPacket[23] = 0x00;
-    sbusPacket[24] = 0x00;
-}
-
-bool sendCaptureRequest(const String &url) {
-    String logMsg = "Trying capture URL: " + url;
-    Serial.println(logMsg);
-    addLog(logMsg);
-    
-    HTTPClient http;
-    http.begin(url.c_str());
-    int httpCode = http.GET();
-    if (httpCode > 0) {
-        String successMsg = "Capture OK - HTTP " + String(httpCode);
-        Serial.println(successMsg);
-        addLog(successMsg);
-        if (httpCode >= 400) {
-            Serial.println(http.getString());
-        }
-        http.end();
-        return true;
-    } else {
-        String errorMsg = "Capture FAILED: " + http.errorToString(httpCode);
-        Serial.println(errorMsg);
-        addLog(errorMsg);
-        http.end();
-        return false;
-    }
-}
-
-// Core 0: Radio & Communication
-void radioTask(void * pvParameters) {
-    WiFi.mode(WIFI_AP_STA);
-    WiFi.softAP(ssid, password, 1, false, 4);
-    Serial.print("AP IP: ");
-    Serial.println(WiFi.softAPIP());
-    addLog("AP Started: " + WiFi.softAPIP().toString());
-    
-    // Kick off the camera-network connection in the BACKGROUND. We do NOT block
-    // here: the web server and (on the other core) the SBUS/RC path come up
-    // immediately. Connection progress is monitored in the for(;;) loop below.
-    // If the camera isn't found within wifiTimeout we stop the STA radio, since
-    // continuously scanning while STA is unconnected disturbs the timing-critical
-    // PWM capture and SBUS output (the RC link).
-    Serial.println("Connecting to camera network (background)...");
-    addLog("Connecting to camera network (background)...");
-    WiFi.setAutoReconnect(true);
-    WiFi.begin(sta_ssid, sta_password);
-
-    unsigned long staStartTime = millis();
-    const unsigned long wifiTimeout = 60000;
-    bool staPending = true;
-
-    server.on("/", []() { server.send_P(200, "text/html", INDEX_HTML); });
-    server.onNotFound([]() { server.send_P(200, "text/html", INDEX_HTML); });
-    server.begin();
-    addLog("Web server started on port 80");
-
-    webSocket.begin();
-    addLog("WebSocket server started on port 81");
-    webSocket.onEvent([](uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
-        if(type == WStype_CONNECTED) {
-            connectedClients++;
-            addLog("Dashboard connected - " + String(connectedClients) + " client(s)");
-        } else if(type == WStype_DISCONNECTED) {
-            connectedClients--;
-            addLog("Dashboard disconnected - " + String(connectedClients) + " client(s)");
-        } else if(type == WStype_TEXT) {
-            String msg = String((char*)payload);
-            if (msg.indexOf("\"type\":\"capture\"") >= 0) {
-                addLog("Capture triggered from dashboard");
-                xTaskNotifyGive(ImageCaptureTask);
-            } else if (msg.indexOf("\"type\":\"setCaptureUrl\"") >= 0) {
-                int idx = msg.indexOf("\"url\":");
-                if (idx >= 0) {
-                    int start = msg.indexOf('"', idx + 6) + 1;
-                    int end = msg.indexOf('"', start);
-                    if (start > 0 && end > start) {
-                        String newUrl = msg.substring(start, end);
-                        micasenseCaptureUrl = newUrl;
-                        addLog("Capture URL updated to: " + newUrl);
-                        webSocket.sendTXT(num, "{\"status\":\"capture URL updated\"}");
-                    }
-                }
-            }
-        }
-    });
-
-    uint32_t lastBroadcast = 0;
-
-    for(;;) {
-        server.handleClient();
-        webSocket.loop();
-
-        // Background camera-network connection monitor (non-blocking).
-        if (staPending) {
-            if (WiFi.status() == WL_CONNECTED) {
-                staPending = false;
-                Serial.println("Connected to camera network.");
-                addLog("Camera network connected! " + WiFi.localIP().toString());
-            } else if (millis() - staStartTime > wifiTimeout) {
-                staPending = false;
-                Serial.println("Camera not found - using AP only.");
-                addLog("Camera network connection failed - using AP only");
-                // Stop scanning so STA radio activity no longer disturbs the RC link.
-                WiFi.setAutoReconnect(false);
-                WiFi.disconnect(true);
-                WiFi.mode(WIFI_AP);
-            }
-        }
-
-        // Broadcast telemetry to dashboard every 5ms
-        if (connectedClients > 0 && (millis() - lastBroadcast > 5)) {
-            lastBroadcast = millis();
-            // Mutex to safely read PWM values while ISRs may be updating them
-            uint16_t snap[CHANNELS];
-            portENTER_CRITICAL(&pwmMux);
-            memcpy(snap, (void*)pwmValues, sizeof(snap));
-            portEXIT_CRITICAL(&pwmMux);
-
-            uint8_t payload[CHANNELS * 2 + 1];
-            for (int i = 0; i < CHANNELS; i++) {
-                uint16_t txVal = (i == 5) ? (rc6_latched_state ? 1000 : 2000) : snap[i];
-                payload[i * 2] = txVal & 0xFF;
-                payload[i * 2 + 1] = (txVal >> 8) & 0xFF;
-            }
-            payload[CHANNELS * 2] = killSwitchActive ? 1 : 0;
-            webSocket.broadcastBIN(payload, sizeof(payload));
-        }
-        vTaskDelay(pdMS_TO_TICKS(1));
-    }
-}
-
-// Core 1: sbus Transmission
-void sbusTransmissionTask(void* pvParameters) {
-    Serial2.begin(100000, SERIAL_8E2, 16, SBUS, true);
-    uint8_t sbusPacket[25];
-    uint32_t lastPacketLog = 0;
-
-    for (;;) {
-        createSbusPacket(sbusPacket, (bool*)&killSwitchActive);
-        Serial2.write(sbusPacket, 25);
-
-        // Throttled decode of the SBUS frame into readable channel values
-        // (~5 Hz) so serial isn't flooded.
-        if (millis() - lastPacketLog > 200) {
-            lastPacketLog = millis();
-
-            // Unpack the 16 little-endian 11-bit channels from the frame.
-            uint16_t ch[16];
-            for (int i = 0; i < 16; i++) {
-                int bitPos = i * 11;
-                int byteIdx = 1 + (bitPos / 8);
-                int bitIdx = bitPos % 8;
-                uint32_t v = sbusPacket[byteIdx] |
-                             (sbusPacket[byteIdx + 1] << 8) |
-                             (sbusPacket[byteIdx + 2] << 16);
-                ch[i] = (v >> bitIdx) & 0x07FF;
-            }
-
-            // ArduPilot maps SBUS 172->1000us and 1811->2000us.
-            // Serial.printf("SBUS us -> THRO:%d AILE:%d ELEV:%d RUDD:%d GEAR:%d AUX1:%d\n",
-            //     (int)((ch[0] - 172) * 1000 / 1639 + 1000),
-            //     (int)((ch[1] - 172) * 1000 / 1639 + 1000),
-            //     (int)((ch[2] - 172) * 1000 / 1639 + 1000),
-            //     (int)((ch[3] - 172) * 1000 / 1639 + 1000),
-            //     (int)((ch[4] - 172) * 1000 / 1639 + 1000),
-            //     (int)((ch[5] - 172) * 1000 / 1639 + 1000));
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(14));
-    }
-}
-
-void imageCaptureTask(void * pvParameters) {
-    for (;;) {
-        uint32_t threadNotification = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-
-        if (threadNotification > 0) {
-            sendCaptureRequest(micasenseCaptureUrl);
-            vTaskDelay(pdMS_TO_TICKS(50));
-        }
-    }
-}
-
-// SETUP
-void setup() {
-    Serial.begin(115200);
-    vTaskDelay(pdMS_TO_TICKS(500));
-
-    for (int i = 0; i < CHANNELS; i++) {
-        pinMode(pwmPins[i], INPUT_PULLDOWN);
-    }
-    
-    attachInterrupt(digitalPinToInterrupt(THRO), pwmISR0, CHANGE);
-    attachInterrupt(digitalPinToInterrupt(AILE), pwmISR1, CHANGE);
-    attachInterrupt(digitalPinToInterrupt(ELEV), pwmISR2, CHANGE);
-    attachInterrupt(digitalPinToInterrupt(RUDD), pwmISR3, CHANGE);
-    attachInterrupt(digitalPinToInterrupt(GEAR), pwmISR4, CHANGE);
-    attachInterrupt(digitalPinToInterrupt(AUX1), pwmISR5, CHANGE);
-    attachInterrupt(digitalPinToInterrupt(CAM_TRIGGER), onCameraTrigger, RISING);
-
-    pinMode(CAM_TRIGGER, INPUT_PULLUP);
-
-    // Pin the Radio loop to Core 0 (Hard Thread Affinity)
-    if (xTaskCreatePinnedToCore(radioTask, "Radio Task", 12288, NULL, 5, &RadioTask, 0) != pdPASS){
-        Serial.println("RADIO FAILURE: Restarting...");
-        delay(2000);
-        ESP.restart();
-     }
-    // Pin the SBUS Transmission loop to Core 1
-    if (xTaskCreatePinnedToCore(sbusTransmissionTask, "SBUS Transmission Task", 8192, NULL, 5, &SBUSTransmissionTask, 1) != pdPASS){
-        Serial.println("TRANSMISSION FAILURE: Restarting...");
-        delay(2000);
-        ESP.restart();
-     }
-
-    xTaskCreatePinnedToCore(imageCaptureTask, "Image Capture Task", 4096, NULL, 1, &ImageCaptureTask, 1);
-}
-
-void loop() {
-    //Serial.printf("PWM -> T:%d A:%d E:%d R:%d G:%d X:%d\n", pwmValues[0], pwmValues[1], pwmValues[2], pwmValues[3], pwmValues[4], pwmValues[5]);
-    //vTaskDelay(pdMS_TO_TICKS(200));
-    vTaskDelete(NULL);
-}
