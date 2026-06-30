@@ -1,3 +1,10 @@
+#include "config.h"
+
+#define CAMERA_BOOT_HEADSTART_MS 15000
+#define CAMERA_RECONNECT_INTERVAL_MS 10000
+
+static bool cameraLinkUp = false;
+
 bool sendCaptureRequest(const String &url) {
     String logMsg = "Trying capture URL: " + url;
     Serial.println(logMsg);
@@ -25,28 +32,40 @@ bool sendCaptureRequest(const String &url) {
 }
 
 void imageCaptureTask(void * pvParameters) {
+    vTaskDelay(pdMS_TO_TICKS(CAMERA_BOOT_HEADSTART_MS));
+
+    WiFi.setAutoReconnect(true);
+    WiFi.begin(sta_ssid, sta_password);
+    addLog("Connecting to camera network on boot...");
+
+    unsigned long lastReconnectAttempt = millis();
+
     for (;;) {
-        uint32_t threadNotification = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        uint32_t threadNotification =
+            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(CAMERA_RECONNECT_INTERVAL_MS));
+
+        bool linkUp = (WiFi.status() == WL_CONNECTED);
+
+        // Log only on state changes so we don't spam the dashboard.
+        if (linkUp && !cameraLinkUp) {
+            cameraLinkUp = true;
+            addLog("Camera network connected: " + WiFi.localIP().toString());
+        } else if (!linkUp && cameraLinkUp) {
+            cameraLinkUp = false;
+            addLog("Camera network lost; reconnecting...");
+        }
+
+        if (!linkUp && (millis() - lastReconnectAttempt > CAMERA_RECONNECT_INTERVAL_MS)) {
+            lastReconnectAttempt = millis();
+            WiFi.begin(sta_ssid, sta_password);
+        }
 
         if (threadNotification > 0) {
-            WiFi.mode(WIFI_AP_STA);
-            WiFi.setAutoReconnect(false);
-            WiFi.begin(sta_ssid, sta_password);
-
-            unsigned long startTime = millis();
-            while (WiFi.status() != WL_CONNECTED && millis() - startTime < 5000) {
-                vTaskDelay(pdMS_TO_TICKS(100));
-            }
-
-            if (WiFi.status() == WL_CONNECTED) {
-                addLog("Camera network connected for capture");
+            if (linkUp) {
                 sendCaptureRequest(micasenseCaptureUrl);
             } else {
-                addLog("Camera unavailable; skipping capture");
+                addLog("Camera not ready; capture skipped");
             }
-
-            WiFi.disconnect(true);
-            vTaskDelay(pdMS_TO_TICKS(20));
         }
     }
 }
