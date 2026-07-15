@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Shapes
 
 Rectangle {
@@ -7,6 +8,7 @@ Rectangle {
     anchors.fill: parent
     clip: true
     color: "#ffffff"
+    property var applicationModel: parent ? parent.applicationModel : null
 
     Rectangle {
         id: rightSide
@@ -274,7 +276,38 @@ Senescence Rate:"
         border.color: "#b2b2b2"
         border.width: 1
         clip: true
-        color: "transparent"
+        color: "#f2f2f7"
+
+        Image {
+            id: mosaicPreview
+            anchors.fill: parent
+            anchors.margins: 12
+            source: map.applicationModel ? map.applicationModel.activeMosaicUrl : ""
+            fillMode: Image.PreserveAspectFit
+            asynchronous: true
+            visible: source !== ""
+        }
+
+        Text {
+            id: stitchingMessage
+            anchors.centerIn: parent
+            width: parent.width - 64
+            color: "#5c5c5c"
+            font.family: "Inter"
+            font.pixelSize: 16
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            text: map.applicationModel ? map.applicationModel.stitchingStatus : "Loading project..."
+            visible: !mosaicPreview.visible
+        }
+
+        BusyIndicator {
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: stitchingMessage.top
+            anchors.bottomMargin: 18
+            running: map.applicationModel ? map.applicationModel.isStitching : false
+            visible: running
+        }
     }
     Rectangle {
         id: frame_8

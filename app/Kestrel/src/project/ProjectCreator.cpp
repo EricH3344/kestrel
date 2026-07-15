@@ -1,9 +1,11 @@
-#include "ProjectCreator.h"
+#include "project/ProjectCreator.h"
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QDateTime>
 #include <QDataStream>
+#include <QCoreApplication>
+#include <QEventLoop>
 
 ProjectCreator::ProjectCreator(QObject *parent)
     : QObject(parent)
@@ -70,6 +72,10 @@ bool ProjectCreator::processImportedFiles(const QString &projectPath, const QStr
         
         // Emit progress signal
         emit projectCreationProgress(i + 1, totalFiles);
+
+        // Project creation currently runs on the UI thread. Process paint and
+        // queued QML updates between files so the progress window stays live.
+        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
     }
     
     return true;

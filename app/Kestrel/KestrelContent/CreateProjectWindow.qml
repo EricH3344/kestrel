@@ -83,7 +83,19 @@ Window {
 
             // Handle Create button click
             onProjectCreateRequested: (projectName, projectDirectory, importedFiles) => {
-                projectCreator.createProject(projectName, projectDirectory, importedFiles)
+                var name = projectName
+                var directory = projectDirectory
+                var files = importedFiles
+
+                if (parentAppWindow) {
+                    parentAppWindow.showProjectCreationProgress(name)
+                }
+                createProjectWindow.close()
+
+                // Let the progress window render before file copying begins.
+                Qt.callLater(function() {
+                    projectCreator.createProject(name, directory, files)
+                })
             }
 
             // Handle Cancel button click
@@ -97,7 +109,6 @@ Window {
             onProjectCreationCompleted: (projectPath) => {
                 console.log("Project created successfully at:", projectPath)
                 createProjectWindow.resetFields()
-                createProjectWindow.close()
             }
             onProjectCreationFailed: (errorMessage) => {
                 console.error("Project creation failed:", errorMessage)

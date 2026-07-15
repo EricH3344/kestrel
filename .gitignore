@@ -99,6 +99,7 @@ htmlcov/
 # Qt / CMake build
 CMakeLists.txt.user*
 build/
+build-*/
 Dependencies/
 Generated/
 .rcc/
@@ -145,3 +146,6 @@ qds_cache/
 *.tmp
 *.pdb
 *.ilk
+docs/PHOTOGRAMMETRY_ROADMAP.md
+app/Kestrel/src/README.md
+tools/odm-comparison/README.md

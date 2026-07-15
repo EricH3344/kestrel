@@ -1,2 +1,2 @@
-# KESTREL
+# Kestrel
 CEG4912/3 Capstone Repository

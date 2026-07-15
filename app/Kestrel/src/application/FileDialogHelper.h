@@ -11,6 +11,8 @@ public:
     
     Q_INVOKABLE QString selectFolder(const QString &startPath = "");
     Q_INVOKABLE QStringList selectFiles(const QString &startPath = "", const QString &filter = "");
+    Q_INVOKABLE QStringList selectTiffFiles(const QString &startPath = "");
+    Q_INVOKABLE QStringList selectTiffFilesFromFolder(const QString &startPath = "");
 
 signals:
     void folderSelected(const QString &folderPath);

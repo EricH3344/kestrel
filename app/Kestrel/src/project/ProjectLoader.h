@@ -2,6 +2,7 @@
 #define PROJECTLOADER_H
 
 #include <QObject>
+#include <QDateTime>
 #include <QStringList>
 
 struct ProjectData

@@ -184,6 +184,10 @@ Rectangle {
             x: 13
             y: 36
 
+            // Keep the file icon above the hover background rectangle.
+            // Without an explicit z-order, the later hover rectangle paints over it.
+            z: 1
+
             height: 40
             width: 40
 
@@ -301,9 +305,50 @@ Rectangle {
             horizontalAlignment: Text.AlignLeft
             lineHeight: 22.40
             lineHeightMode: Text.FixedHeight
-            text: "Can select files or folders of *.TIFF’s"
+            text: "Select TIFF files or import a folder"
             textFormat: Text.PlainText
             verticalAlignment: Text.AlignVCenter
+        }
+        Rectangle {
+            id: importFolderButton
+
+            x: 244
+            y: 88
+            height: 28
+            width: 113
+
+            color: importFolderMouseArea.containsMouse ? "#e0e0e0" : "#ffffff"
+            border.color: "#7a7a7a"
+            border.width: 1
+            radius: 3
+
+            Text {
+                anchors.fill: parent
+                color: "#1e1e1e"
+                font.family: "Inter"
+                font.pixelSize: 12
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                text: "Import Folder"
+            }
+
+            MouseArea {
+                id: importFolderMouseArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+            }
+        }
+        Connections {
+            target: importFolderMouseArea
+            onClicked: {
+                var selectedFiles = fileDialogHelper.selectTiffFilesFromFolder(
+                            create_Project.projectDirectory)
+                if (selectedFiles && selectedFiles.length > 0) {
+                    create_Project.importedFiles = selectedFiles
+                    create_Project.importedFilesCount = selectedFiles.length
+                }
+            }
         }
         Text {
             id: x_files_imported

@@ -6,11 +6,7 @@ Column {
     id: viewHeader
 
     property int currentScreen: 2
-    property list<QtObject> projectsList: [
-        QtObject { property string projectName: "Image_001"; property bool isActive: true },
-        QtObject { property string projectName: "Image_002"; property bool isActive: false },
-        QtObject { property string projectName: "Image_003"; property bool isActive: false }
-    ]
+    property list<QtObject> projectsList: []
     property var appWindow: null
 
     anchors.left: parent.left
