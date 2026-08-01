@@ -25,17 +25,32 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "adc.h"
+#include "usart.h"
+#include <stdio.h>
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+typedef struct {
+    uint16_t roll_us;
+    uint16_t pitch_us;
+} Axis_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define NUM_ADC_CHANNELS  2
+#define DEADBAND_US       15
 
+// Roll (CH1 / PA3) Raw Calibration, change later
+#define ROLL_MIN_RAW      420
+#define ROLL_MAX_RAW      3700
+
+// Pitch (CH2 / PC0) Raw Calibration change later
+#define PITCH_MIN_RAW     460
+#define PITCH_MAX_RAW     3680
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -45,7 +60,8 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
-
+uint16_t adc_raw_buffer[NUM_ADC_CHANNELS];
+Axis_t axis;
 /* USER CODE END Variables */
 /* Definitions for inputTask */
 osThreadId_t inputTaskHandle;
@@ -57,21 +73,17 @@ const osThreadAttr_t inputTask_attributes = {
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
-
+static long map_range(long x, long in_min, long in_max, long out_min, long out_max);
+static uint16_t apply_deadband(uint16_t val, uint16_t center, uint16_t deadband);
 /* USER CODE END FunctionPrototypes */
 
 void StartInputTask(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
-/**
-  * @brief  FreeRTOS initialization
-  * @param  None
-  * @retval None
-  */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
-
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_raw_buffer, NUM_ADC_CHANNELS);
   /* USER CODE END Init */
 
   /* USER CODE BEGIN RTOS_MUTEX */
@@ -91,7 +103,7 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
-  /* creation of inputTask */
+  /* creation of inputTask */ 
   inputTaskHandle = osThreadNew(StartInputTask, NULL, &inputTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
@@ -107,23 +119,63 @@ void MX_FREERTOS_Init(void) {
 /* USER CODE BEGIN Header_StartInputTask */
 /**
   * @brief  Function implementing the inputTask thread.
-  * @param  argument: Not used
-  * @retval None
   */
 /* USER CODE END Header_StartInputTask */
 void StartInputTask(void *argument)
 {
   /* USER CODE BEGIN StartInputTask */
-  /* Infinite loop */
+  char debug_str[128];
+  
+  // Direct raw transmission test message to confirm UART works instantly
+  char *boot_msg = "\r\n--- Direct UART Transmission Active ---\r\n";
+  HAL_UART_Transmit(&huart3, (uint8_t*)boot_msg, strlen(boot_msg), HAL_MAX_DELAY);
+
   for(;;)
   {
-    osDelay(1);
+      uint16_t raw_ch1 = adc_raw_buffer[0]; // Roll
+      uint16_t raw_ch2 = adc_raw_buffer[1]; // Pitch
+
+      uint16_t mapped_roll  = (uint16_t)map_range(raw_ch1, ROLL_MIN_RAW, ROLL_MAX_RAW, 1000, 2000);
+      uint16_t mapped_pitch = (uint16_t)map_range(raw_ch2, PITCH_MIN_RAW, PITCH_MAX_RAW, 1000, 2000);
+
+      mapped_roll  = apply_deadband(mapped_roll,  1500, DEADBAND_US);
+      mapped_pitch = apply_deadband(mapped_pitch, 1500, DEADBAND_US);
+
+      axis.roll_us = mapped_roll;
+      axis.pitch_us = mapped_pitch;
+
+      // Format string into a local buffer instead of relying on standard printf stdout redirection
+      int len = snprintf(debug_str, sizeof(debug_str), 
+                         "[Gimbal Raw] CH1: %4d | CH2: %4d --> [PWM] Roll: %4dus | Pitch: %4dus\r\n", 
+                         raw_ch1, raw_ch2, mapped_roll, mapped_pitch);
+
+      // Transmit directly via HAL without depending on standard I/O library flags
+      if (len > 0) {
+          HAL_UART_Transmit(&huart3, (uint8_t*)debug_str, len, HAL_MAX_DELAY);
+      }
+
+      vTaskDelay(pdMS_TO_TICKS(50));
   }
   /* USER CODE END StartInputTask */
 }
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+int _write(int file, char *ptr, int len) {
+    HAL_UART_Transmit(&huart3, (uint8_t *)ptr, len, HAL_MAX_DELAY);
+    return len;
+}
 
+static long map_range(long x, long in_min, long in_max, long out_min, long out_max) {
+    if (x < in_min) x = in_min;
+    if (x > in_max) x = in_max;
+    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
+static uint16_t apply_deadband(uint16_t val, uint16_t center, uint16_t deadband) {
+    if (val >= (center - deadband) && val <= (center + deadband)) {
+        return center;
+    }
+    return val;
+}
 /* USER CODE END Application */
-
