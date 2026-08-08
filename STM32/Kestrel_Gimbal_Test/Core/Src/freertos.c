@@ -34,23 +34,35 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 typedef struct {
-    uint16_t roll_us;
-    uint16_t pitch_us;
+    unsigned int ch0 : 11;
+    unsigned int ch1 : 11;
+    unsigned int ch2 : 11;
+    unsigned int ch3 : 11;
+    unsigned int ch4 : 11;
+    unsigned int ch5 : 11;
+    unsigned int ch6 : 11;
+    unsigned int ch7 : 11;
+    unsigned int ch8 : 11;
+    unsigned int ch9 : 11;
+    unsigned int ch10: 11;
+    unsigned int ch11: 11;
+    unsigned int ch12: 11;
+    unsigned int ch13: 11;
+    unsigned int ch14: 11;
+    unsigned int ch15: 11;
+} __attribute__((packed)) crsf_channels_t;
+
+typedef struct {
+    uint16_t roll_crsf;
+    uint16_t pitch_crsf;
+    uint16_t throt_crsf;
+    uint16_t yaw_crsf;
 } Axis_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define NUM_ADC_CHANNELS  2
-#define DEADBAND_US       15
-
-// Roll (CH1 / PA3) Raw Calibration, change later
-#define ROLL_MIN_RAW      420
-#define ROLL_MAX_RAW      3700
-
-// Pitch (CH2 / PC0) Raw Calibration change later
-#define PITCH_MIN_RAW     460
-#define PITCH_MAX_RAW     3680
+#define NUM_ADC_CHANNELS  4
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -73,14 +85,19 @@ const osThreadAttr_t inputTask_attributes = {
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
-static long map_range(long x, long in_min, long in_max, long out_min, long out_max);
-static uint16_t apply_deadband(uint16_t val, uint16_t center, uint16_t deadband);
+uint16_t map_adc_to_crsf(uint16_t adc_val);
+uint8_t crsf_crc8(uint8_t *data, uint16_t len);
 /* USER CODE END FunctionPrototypes */
 
 void StartInputTask(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
+/**
+  * @brief  FreeRTOS initialization
+  * @param  None
+  * @retval None
+  */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
   HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_raw_buffer, NUM_ADC_CHANNELS);
@@ -103,7 +120,7 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
-  /* creation of inputTask */ 
+  /* creation of inputTask */
   inputTaskHandle = osThreadNew(StartInputTask, NULL, &inputTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
@@ -124,58 +141,73 @@ void MX_FREERTOS_Init(void) {
 void StartInputTask(void *argument)
 {
   /* USER CODE BEGIN StartInputTask */
-  char debug_str[128];
-  
-  // Direct raw transmission test message to confirm UART works instantly
-  char *boot_msg = "\r\n--- Direct UART Transmission Active ---\r\n";
-  HAL_UART_Transmit(&huart3, (uint8_t*)boot_msg, strlen(boot_msg), HAL_MAX_DELAY);
+    uint8_t crsf_tx_buf[26];
 
-  for(;;)
-  {
-      uint16_t raw_ch1 = adc_raw_buffer[0]; // Roll
-      uint16_t raw_ch2 = adc_raw_buffer[1]; // Pitch
+    for(;;)
+    {
+        // 1. Read and Scale ADC inputs
+        axis.roll_crsf   = map_adc_to_crsf(adc_raw_buffer[0]);
+        axis.pitch_crsf  = map_adc_to_crsf(adc_raw_buffer[1]);
+        axis.throt_crsf  = map_adc_to_crsf(adc_raw_buffer[2]);
+        axis.yaw_crsf    = map_adc_to_crsf(adc_raw_buffer[3]);
 
-      uint16_t mapped_roll  = (uint16_t)map_range(raw_ch1, ROLL_MIN_RAW, ROLL_MAX_RAW, 1000, 2000);
-      uint16_t mapped_pitch = (uint16_t)map_range(raw_ch2, PITCH_MIN_RAW, PITCH_MAX_RAW, 1000, 2000);
+        // char dbg[80];
+        // int len = snprintf(dbg, sizeof(dbg),
+        //     "raw[0..3]=%4u %4u %4u %4u  crsf: roll=%4u pitch=%4u throt=%4u yaw=%4u\r\n",
+        //     adc_raw_buffer[0], adc_raw_buffer[1], adc_raw_buffer[2], adc_raw_buffer[3],
+        //     axis.roll_crsf, axis.pitch_crsf, axis.throt_crsf, axis.yaw_crsf);
+        // HAL_UART_Transmit(&huart3, (uint8_t*)dbg, len, HAL_MAX_DELAY);
 
-      mapped_roll  = apply_deadband(mapped_roll,  1500, DEADBAND_US);
-      mapped_pitch = apply_deadband(mapped_pitch, 1500, DEADBAND_US);
+        // 2. Build CRSF Frame Header
+        crsf_tx_buf[0] = 0xEE; // Sync byte for Transmitter Module
+        crsf_tx_buf[1] = 24;   // Length = Type (1) + Payload (22) + CRC (1)
+        crsf_tx_buf[2] = 0x16; // Frame Type: RC_CHANNELS_PACKED
 
-      axis.roll_us = mapped_roll;
-      axis.pitch_us = mapped_pitch;
+        // 3. Map Channels into the packed payload buffer
+        crsf_channels_t *rc = (crsf_channels_t *)&crsf_tx_buf[3];
+        memset(rc, 0, 22);     // Clear all channels to 0 initially
+        
+        rc->ch0 = axis.roll_crsf;
+        rc->ch1 = axis.pitch_crsf;
+        rc->ch2 = axis.throt_crsf;
+        rc->ch3 = axis.yaw_crsf;
+        
+        // ExpressLRS uses CH5 (Aux 1) specifically for arming. 
+        // 172 = Disarmed, >1500 = Armed. Hardcode low for now for safety.
+        rc->ch4 = 172; 
 
-      // Format string into a local buffer instead of relying on standard printf stdout redirection
-      int len = snprintf(debug_str, sizeof(debug_str), 
-                         "[Gimbal Raw] CH1: %4d | CH2: %4d --> [PWM] Roll: %4dus | Pitch: %4dus\r\n", 
-                         raw_ch1, raw_ch2, mapped_roll, mapped_pitch);
+        // 4. Calculate Checksum (Starts from Type byte to end of payload)
+        crsf_tx_buf[25] = crsf_crc8(&crsf_tx_buf[2], 23);
 
-      // Transmit directly via HAL without depending on standard I/O library flags
-      if (len > 0) {
-          HAL_UART_Transmit(&huart3, (uint8_t*)debug_str, len, HAL_MAX_DELAY);
-      }
+        // 5. Transmit Frame
+        // Ensure huart3 is configured for 420000 Baud, 8 Data Bits, No Parity, 1 Stop Bit in CubeMX
+        HAL_UART_Transmit(&huart3, crsf_tx_buf, 26, HAL_MAX_DELAY);
 
-      vTaskDelay(pdMS_TO_TICKS(50));
-  }
+        // CRSF runs fast. 10ms delay gives a 100Hz packet rate, which is a great baseline.
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
   /* USER CODE END StartInputTask */
 }
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
-int _write(int file, char *ptr, int len) {
-    HAL_UART_Transmit(&huart3, (uint8_t *)ptr, len, HAL_MAX_DELAY);
-    return len;
+uint16_t map_adc_to_crsf(uint16_t adc_val) {
+    long result = (long)adc_val * (1811 - 172) / 4095 + 172;
+    if (result > 1811) return 1811;
+    if (result < 172) return 172;
+    return (uint16_t)result;
 }
 
-static long map_range(long x, long in_min, long in_max, long out_min, long out_max) {
-    if (x < in_min) x = in_min;
-    if (x > in_max) x = in_max;
-    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
-}
-
-static uint16_t apply_deadband(uint16_t val, uint16_t center, uint16_t deadband) {
-    if (val >= (center - deadband) && val <= (center + deadband)) {
-        return center;
+uint8_t crsf_crc8(uint8_t *data, uint16_t len) {
+    uint8_t crc = 0x00;
+    for (uint16_t i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (uint8_t j = 0; j < 8; j++) {
+            if (crc & 0x80) crc = (crc << 1) ^ 0xD5;
+            else crc <<= 1;
+        }
     }
-    return val;
+    return crc;
 }
 /* USER CODE END Application */
+
