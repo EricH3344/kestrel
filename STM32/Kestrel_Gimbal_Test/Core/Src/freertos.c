@@ -53,11 +53,25 @@ typedef struct {
 } __attribute__((packed)) crsf_channels_t;
 
 typedef struct {
-    uint16_t roll_crsf;
-    uint16_t pitch_crsf;
-    uint16_t throt_crsf;
-    uint16_t yaw_crsf;
-} Axis_t;
+    uint16_t roll;
+    uint16_t pitch;
+    uint16_t throttle;
+    uint16_t yaw;
+
+    uint16_t aux1_sw;
+    uint16_t sw_flight_mode;
+    uint16_t aux2_sw;
+    uint16_t aux3_sw;
+    uint16_t sw_arm;
+    uint16_t sw_emergency_kill;
+
+    uint16_t btn_left;
+    uint16_t btn_right;
+    uint16_t btn1;
+    uint16_t btn2;
+    uint16_t btn3;
+    uint16_t btn4;
+} ControllerInputs_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -73,7 +87,7 @@ typedef struct {
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 uint16_t adc_raw_buffer[NUM_ADC_CHANNELS];
-Axis_t axis;
+ControllerInputs_t inputs;
 /* USER CODE END Variables */
 /* Definitions for inputTask */
 osThreadId_t inputTaskHandle;
@@ -145,17 +159,17 @@ void StartInputTask(void *argument)
 
     for(;;)
     {
-        // 1. Read and Scale ADC inputs
-        axis.roll_crsf   = map_adc_to_crsf(adc_raw_buffer[0]);
-        axis.pitch_crsf  = map_adc_to_crsf(adc_raw_buffer[1]);
-        axis.throt_crsf  = map_adc_to_crsf(adc_raw_buffer[2]);
-        axis.yaw_crsf    = map_adc_to_crsf(adc_raw_buffer[3]);
+        // 1. Read and Scale inputs
+        inputs.roll   = map_adc_to_crsf(adc_raw_buffer[0]);
+        inputs.pitch  = map_adc_to_crsf(adc_raw_buffer[1]);
+        inputs.throt  = map_adc_to_crsf(adc_raw_buffer[2]);
+        inputs.yaw    = map_adc_to_crsf(adc_raw_buffer[3]);
 
         // char dbg[80];
         // int len = snprintf(dbg, sizeof(dbg),
         //     "raw[0..3]=%4u %4u %4u %4u  crsf: roll=%4u pitch=%4u throt=%4u yaw=%4u\r\n",
         //     adc_raw_buffer[0], adc_raw_buffer[1], adc_raw_buffer[2], adc_raw_buffer[3],
-        //     axis.roll_crsf, axis.pitch_crsf, axis.throt_crsf, axis.yaw_crsf);
+        //     inputs.roll, inputs.pitch, inputs.throt, inputs.yaw);
         // HAL_UART_Transmit(&huart3, (uint8_t*)dbg, len, HAL_MAX_DELAY);
 
         // 2. Build CRSF Frame Header
@@ -167,10 +181,10 @@ void StartInputTask(void *argument)
         crsf_channels_t *rc = (crsf_channels_t *)&crsf_tx_buf[3];
         memset(rc, 0, 22);     // Clear all channels to 0 initially
         
-        rc->ch0 = axis.roll_crsf;
-        rc->ch1 = axis.pitch_crsf;
-        rc->ch2 = axis.throt_crsf;
-        rc->ch3 = axis.yaw_crsf;
+        rc->ch0 = inputs.roll;
+        rc->ch1 = inputs.pitch;
+        rc->ch2 = inputs.throt;
+        rc->ch3 = inputs.yaw;
         
         // ExpressLRS uses CH5 (Aux 1) specifically for arming. 
         // 172 = Disarmed, >1500 = Armed. Hardcode low for now for safety.
@@ -196,6 +210,16 @@ uint16_t map_adc_to_crsf(uint16_t adc_val) {
     if (result > 1811) return 1811;
     if (result < 172) return 172;
     return (uint16_t)result;
+}
+
+uint16_t read_digital_input(GPIO_TypeDef* GPIOx, uint16_t GPIO_Pin) {
+    return (HAL_GPIO_ReadPin(GPIOx, GPIO_Pin) == GPIO_PIN_RESET) ? 1811 : 172;
+}
+
+uint16_t read_3pos_switch(GPIO_TypeDef* GPIOx_A, uint16_t Pin_A, GPIO_TypeDef* GPIOx_B, uint16_t Pin_B) {
+    if (HAL_GPIO_ReadPin(GPIOx_A, Pin_A) == GPIO_PIN_RESET) return 172;
+    if (HAL_GPIO_ReadPin(GPIOx_B, Pin_B) == GPIO_PIN_RESET) return 1811;
+    return 992;
 }
 
 uint8_t crsf_crc8(uint8_t *data, uint16_t len) {
