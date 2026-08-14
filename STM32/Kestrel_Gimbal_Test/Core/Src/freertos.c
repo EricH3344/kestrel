@@ -55,7 +55,7 @@ typedef struct {
 typedef struct {
     uint16_t roll;
     uint16_t pitch;
-    uint16_t throttle;
+    uint16_t throt;
     uint16_t yaw;
 
     uint16_t aux1_sw;
@@ -101,6 +101,8 @@ const osThreadAttr_t inputTask_attributes = {
 /* USER CODE BEGIN FunctionPrototypes */
 uint16_t map_adc_to_crsf(uint16_t adc_val);
 uint8_t crsf_crc8(uint8_t *data, uint16_t len);
+uint16_t read_digital_input(GPIO_TypeDef* GPIOx, uint16_t GPIO_Pin);
+uint16_t read_3pos_switch(GPIO_TypeDef* GPIOx_A, uint16_t Pin_A, GPIO_TypeDef* GPIOx_B, uint16_t Pin_B);
 /* USER CODE END FunctionPrototypes */
 
 void StartInputTask(void *argument);
@@ -159,46 +161,73 @@ void StartInputTask(void *argument)
 
     for(;;)
     {
-        // 1. Read and Scale inputs
-        inputs.roll   = map_adc_to_crsf(adc_raw_buffer[0]);
-        inputs.pitch  = map_adc_to_crsf(adc_raw_buffer[1]);
-        inputs.throt  = map_adc_to_crsf(adc_raw_buffer[2]);
-        inputs.yaw    = map_adc_to_crsf(adc_raw_buffer[3]);
+      // 1. Read and Scale inputs
+      inputs.roll   = map_adc_to_crsf(adc_raw_buffer[0]);
+      inputs.pitch  = map_adc_to_crsf(adc_raw_buffer[1]);
+      inputs.throt  = map_adc_to_crsf(adc_raw_buffer[2]);
+      inputs.yaw    = map_adc_to_crsf(adc_raw_buffer[3]);
 
-        // char dbg[80];
-        // int len = snprintf(dbg, sizeof(dbg),
-        //     "raw[0..3]=%4u %4u %4u %4u  crsf: roll=%4u pitch=%4u throt=%4u yaw=%4u\r\n",
-        //     adc_raw_buffer[0], adc_raw_buffer[1], adc_raw_buffer[2], adc_raw_buffer[3],
-        //     inputs.roll, inputs.pitch, inputs.throt, inputs.yaw);
-        // HAL_UART_Transmit(&huart3, (uint8_t*)dbg, len, HAL_MAX_DELAY);
+      inputs.aux1_sw = read_digital_input(GPIOC, GPIO_PIN_2);
+      inputs.aux2_sw = read_digital_input(GPIOB, GPIO_PIN_1);
+      inputs.sw_flight_mode = read_3pos_switch(GPIOB, GPIO_PIN_2, GPIOB, GPIO_PIN_10);
+      inputs.aux3_sw = read_3pos_switch(GPIOB, GPIO_PIN_11, GPIOB, GPIO_PIN_12);
+      inputs.sw_arm = read_digital_input(GPIOC, GPIO_PIN_6);
+      inputs.sw_emergency_kill = read_digital_input(GPIOC, GPIO_PIN_8);
 
-        // 2. Build CRSF Frame Header
-        crsf_tx_buf[0] = 0xEE; // Sync byte for Transmitter Module
-        crsf_tx_buf[1] = 24;   // Length = Type (1) + Payload (22) + CRC (1)
-        crsf_tx_buf[2] = 0x16; // Frame Type: RC_CHANNELS_PACKED
+      inputs.btn_left = read_digital_input(GPIOC, GPIO_PIN_9);
+      inputs.btn_right = read_digital_input(GPIOC, GPIO_PIN_10);
+      inputs.btn1 = read_digital_input(GPIOB, GPIO_PIN_4);
+      inputs.btn2 = read_digital_input(GPIOB, GPIO_PIN_5);
+      inputs.btn3 = read_digital_input(GPIOB, GPIO_PIN_8);
+      inputs.btn4 = read_digital_input(GPIOB, GPIO_PIN_9);
 
-        // 3. Map Channels into the packed payload buffer
-        crsf_channels_t *rc = (crsf_channels_t *)&crsf_tx_buf[3];
-        memset(rc, 0, 22);     // Clear all channels to 0 initially
-        
-        rc->ch0 = inputs.roll;
-        rc->ch1 = inputs.pitch;
-        rc->ch2 = inputs.throt;
-        rc->ch3 = inputs.yaw;
-        
-        // ExpressLRS uses CH5 (Aux 1) specifically for arming. 
-        // 172 = Disarmed, >1500 = Armed. Hardcode low for now for safety.
-        rc->ch4 = 172; 
+      // 2. Build CRSF Frame Header
+      crsf_tx_buf[0] = 0xEE; // Sync byte for Transmitter Module
+      crsf_tx_buf[1] = 24;   // Length = Type (1) + Payload (22) + CRC (1)
+      crsf_tx_buf[2] = 0x16; // Frame Type: RC_CHANNELS_PACKED
 
-        // 4. Calculate Checksum (Starts from Type byte to end of payload)
-        crsf_tx_buf[25] = crsf_crc8(&crsf_tx_buf[2], 23);
+      // 3. Map Channels into the packed payload buffer
+      crsf_channels_t *rc = (crsf_channels_t *)&crsf_tx_buf[3];
+      memset(rc, 0, 22);     // Clear all channels to 0 initially
+      
+      rc->ch0 = inputs.roll;
+      rc->ch1 = inputs.pitch;
+      rc->ch2 = inputs.throt;
+      rc->ch3 = inputs.yaw;
 
-        // 5. Transmit Frame
-        // Ensure huart3 is configured for 420000 Baud, 8 Data Bits, No Parity, 1 Stop Bit in CubeMX
-        HAL_UART_Transmit(&huart3, crsf_tx_buf, 26, HAL_MAX_DELAY);
+      rc->ch4 = inputs.sw_arm; // ExpressLRS uses 5th channel for arming. 
+      rc->ch5 = inputs.sw_flight_mode;
+      rc->ch6 = inputs.aux2_sw;
+      rc->ch7 = inputs.aux3_sw;
+      rc->ch8 = inputs.aux1_sw;
+      rc->ch9 = inputs.sw_emergency_kill;
 
-        // CRSF runs fast. 10ms delay gives a 100Hz packet rate, which is a great baseline.
-        vTaskDelay(pdMS_TO_TICKS(10));
+      rc->ch10 = inputs.btn_left;
+      rc->ch11 = inputs.btn_right;
+      rc->ch12 = inputs.btn1;
+      rc->ch13 = inputs.btn2;
+      rc->ch14 = inputs.btn3;
+      rc->ch15 = inputs.btn4;
+
+      // 4. Calculate Checksum (Starts from Type byte to end of payload)
+      crsf_tx_buf[25] = crsf_crc8(&crsf_tx_buf[2], 23);
+
+      // 5. Transmit Frame
+      // Ensure huart3 is configured for 420000 Baud, 8 Data Bits, No Parity, 1 Stop Bit in CubeMX
+      HAL_UART_Transmit(&huart3, crsf_tx_buf, 26, HAL_MAX_DELAY);
+
+      // Debugging output for monitoring inputs
+      // char dbg[160];
+      // int len = snprintf(dbg, sizeof(dbg),
+      //     "raw[0..3]=%4u %4u %4u %4u | crsf: roll=%4u pitch=%4u throt=%4u yaw=%4u | "
+      //     "btn=%4u sw2pos=%4u sw3pos=%4u\r\n",
+      //     adc_raw_buffer[0], adc_raw_buffer[1], adc_raw_buffer[2], adc_raw_buffer[3],
+      //     inputs.roll, inputs.pitch, inputs.throt, inputs.yaw,
+      //     inputs.btn1, inputs.sw_arm, inputs.sw_flight_mode);
+      // HAL_UART_Transmit(&huart3, (uint8_t*)dbg, len, HAL_MAX_DELAY);
+
+      // CRSF runs fast. 10ms delay gives a 100Hz packet rate, which is a great baseline.
+      vTaskDelay(pdMS_TO_TICKS(10));
     }
   /* USER CODE END StartInputTask */
 }
