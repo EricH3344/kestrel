@@ -29,6 +29,7 @@
 #include "usart.h"
 #include <stdio.h>
 #include <string.h>
+#include "stream_buffer.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -88,6 +89,10 @@ typedef struct {
 /* USER CODE BEGIN Variables */
 uint16_t adc_raw_buffer[NUM_ADC_CHANNELS];
 ControllerInputs_t inputs;
+
+StreamBufferHandle_t usbRxStreamBuffer;
+const size_t usbRxStreamBufferSize = 512;
+const size_t usbRxStreamBufferTriggerLevel = 1;
 /* USER CODE END Variables */
 /* Definitions for inputTask */
 osThreadId_t inputTaskHandle;
@@ -95,6 +100,13 @@ const osThreadAttr_t inputTask_attributes = {
   .name = "inputTask",
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityHigh,
+};
+/* Definitions for mavlinkBridge */
+osThreadId_t mavlinkBridgeHandle;
+const osThreadAttr_t mavlinkBridge_attributes = {
+  .name = "mavlinkBridge",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityLow,
 };
 
 /* Private function prototypes -----------------------------------------------*/
@@ -106,7 +118,9 @@ uint16_t read_3pos_switch(GPIO_TypeDef* GPIOx_A, uint16_t Pin_A, GPIO_TypeDef* G
 /* USER CODE END FunctionPrototypes */
 
 void StartInputTask(void *argument);
+void MavlinkBridgeTask(void *argument);
 
+extern void MX_USB_DEVICE_Init(void);
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
 /**
@@ -117,6 +131,9 @@ void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
   HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_raw_buffer, NUM_ADC_CHANNELS);
+
+  usbRxStreamBuffer = xStreamBufferCreate(usbRxStreamBufferSize, usbRxStreamBufferTriggerLevel);
+  if (usbRxStreamBuffer == NULL) { Error_Handler(); }
   /* USER CODE END Init */
 
   /* USER CODE BEGIN RTOS_MUTEX */
@@ -139,6 +156,9 @@ void MX_FREERTOS_Init(void) {
   /* creation of inputTask */
   inputTaskHandle = osThreadNew(StartInputTask, NULL, &inputTask_attributes);
 
+  /* creation of mavlinkBridge */
+  mavlinkBridgeHandle = osThreadNew(MavlinkBridgeTask, NULL, &mavlinkBridge_attributes);
+
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
@@ -156,6 +176,8 @@ void MX_FREERTOS_Init(void) {
 /* USER CODE END Header_StartInputTask */
 void StartInputTask(void *argument)
 {
+  /* init code for USB_DEVICE */
+  MX_USB_DEVICE_Init();
   /* USER CODE BEGIN StartInputTask */
     uint8_t crsf_tx_buf[26];
 
@@ -230,6 +252,30 @@ void StartInputTask(void *argument)
       vTaskDelay(pdMS_TO_TICKS(10));
     }
   /* USER CODE END StartInputTask */
+}
+
+/* USER CODE BEGIN Header_MavlinkBridgeTask */
+/**
+* @brief Function implementing the mavlinkBridge thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_MavlinkBridgeTask */
+void MavlinkBridgeTask(void *argument)
+{
+  /* USER CODE BEGIN MavlinkBridgeTask */
+  uint8_t rx_byte;
+  size_t bytes_received;
+
+  for(;;)
+  {
+    bytes_received = xStreamBufferReceive(usbRxStreamBuffer, (void *)&rx_byte, sizeof(rx_byte), portMAX_DELAY);
+    if (bytes_received > 0) {
+      HAL_UART_Transmit(&huart2, &rx_byte, 1, HAL_MAX_DELAY);
+    }
+    osDelay(1);
+  }
+  /* USER CODE END MavlinkBridgeTask */
 }
 
 /* Private application code --------------------------------------------------*/
