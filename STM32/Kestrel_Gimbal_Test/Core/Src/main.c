@@ -101,7 +101,6 @@ int main(void)
   MX_ADC1_Init();
   MX_ETH_Init();
   MX_USART3_UART_Init();
-  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
