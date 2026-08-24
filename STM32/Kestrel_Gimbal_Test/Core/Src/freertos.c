@@ -104,7 +104,8 @@ const size_t usbRxStreamBufferTriggerLevel = 1;
 uint8_t mavlink_dl_dma_buf[MAVLINK_DL_DMA_BUF_SIZE];
 
 osSemaphoreId_t uart3TxDoneSemHandle;
-osMessageQueueId_t crsfTxQueueHandle;
+osMessageQueueId_t rcTxQueueHandle;
+osMessageQueueId_t mavlinkTxQueueHandle;
 /* USER CODE END Variables */
 /* Definitions for inputTask */
 osThreadId_t inputTaskHandle;
@@ -172,8 +173,11 @@ void MX_FREERTOS_Init(void) {
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
-  crsfTxQueueHandle = osMessageQueueNew(10, sizeof(CrsfTxFrame_t), NULL);
-  if (crsfTxQueueHandle == NULL) { Error_Handler(); }
+  rcTxQueueHandle = osMessageQueueNew(4, sizeof(CrsfTxFrame_t), NULL);
+  if (rcTxQueueHandle == NULL) { Error_Handler(); }
+
+  mavlinkTxQueueHandle = osMessageQueueNew(16, sizeof(CrsfTxFrame_t), NULL);
+  if (mavlinkTxQueueHandle == NULL) { Error_Handler(); }
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -207,82 +211,82 @@ void StartInputTask(void *argument)
   /* init code for USB_DEVICE */
   MX_USB_DEVICE_Init();
   /* USER CODE BEGIN StartInputTask */
-    uint8_t crsf_tx_buf[26];
+  uint8_t crsf_tx_buf[26];
 
-    for(;;)
-    {
-      // 1. Read and Scale inputs
-      inputs.roll   = map_adc_to_crsf(adc_raw_buffer[0]);
-      inputs.pitch  = map_adc_to_crsf(adc_raw_buffer[1]);
-      inputs.throt  = map_adc_to_crsf(adc_raw_buffer[2]);
-      inputs.yaw    = map_adc_to_crsf(adc_raw_buffer[3]);
+  for(;;)
+  {
+    // 1. Read and Scale inputs
+    inputs.roll   = map_adc_to_crsf(adc_raw_buffer[0]);
+    inputs.pitch  = map_adc_to_crsf(adc_raw_buffer[1]);
+    inputs.throt  = map_adc_to_crsf(adc_raw_buffer[2]);
+    inputs.yaw    = map_adc_to_crsf(adc_raw_buffer[3]);
 
-      inputs.aux1_sw = read_digital_input(GPIOC, GPIO_PIN_2);
-      inputs.aux2_sw = read_digital_input(GPIOB, GPIO_PIN_1);
-      inputs.sw_flight_mode = read_3pos_switch(GPIOB, GPIO_PIN_2, GPIOB, GPIO_PIN_10);
-      inputs.aux3_sw = read_3pos_switch(GPIOB, GPIO_PIN_11, GPIOB, GPIO_PIN_12);
-      inputs.sw_arm = read_digital_input(GPIOC, GPIO_PIN_6);
-      inputs.sw_emergency_kill = read_digital_input(GPIOC, GPIO_PIN_8);
+    inputs.aux1_sw = read_digital_input(GPIOC, GPIO_PIN_2);
+    inputs.aux2_sw = read_digital_input(GPIOB, GPIO_PIN_1);
+    inputs.sw_flight_mode = read_3pos_switch(GPIOB, GPIO_PIN_2, GPIOB, GPIO_PIN_10);
+    inputs.aux3_sw = read_3pos_switch(GPIOB, GPIO_PIN_11, GPIOB, GPIO_PIN_12);
+    inputs.sw_arm = read_digital_input(GPIOC, GPIO_PIN_6);
+    inputs.sw_emergency_kill = read_digital_input(GPIOC, GPIO_PIN_8);
 
-      inputs.btn_left = read_digital_input(GPIOC, GPIO_PIN_9);
-      inputs.btn_right = read_digital_input(GPIOC, GPIO_PIN_10);
-      inputs.btn1 = read_digital_input(GPIOB, GPIO_PIN_4);
-      inputs.btn2 = read_digital_input(GPIOB, GPIO_PIN_5);
-      inputs.btn3 = read_digital_input(GPIOB, GPIO_PIN_8);
-      inputs.btn4 = read_digital_input(GPIOB, GPIO_PIN_9);
+    inputs.btn_left = read_digital_input(GPIOC, GPIO_PIN_9);
+    inputs.btn_right = read_digital_input(GPIOC, GPIO_PIN_10);
+    inputs.btn1 = read_digital_input(GPIOB, GPIO_PIN_4);
+    inputs.btn2 = read_digital_input(GPIOB, GPIO_PIN_5);
+    inputs.btn3 = read_digital_input(GPIOB, GPIO_PIN_8);
+    inputs.btn4 = read_digital_input(GPIOB, GPIO_PIN_9);
 
-      // 2. Build CRSF Frame Header
-      crsf_tx_buf[0] = 0xEE; // Sync byte for Transmitter Module
-      crsf_tx_buf[1] = 24;   // Length = Type (1) + Payload (22) + CRC (1)
-      crsf_tx_buf[2] = 0x16; // Frame Type: RC_CHANNELS_PACKED
+    // 2. Build CRSF Frame Header
+    crsf_tx_buf[0] = 0xEE; // Sync byte for Transmitter Module
+    crsf_tx_buf[1] = 24;   // Length = Type (1) + Payload (22) + CRC (1)
+    crsf_tx_buf[2] = 0x16; // Frame Type: RC_CHANNELS_PACKED
 
-      // 3. Map Channels into the packed payload buffer
-      crsf_channels_t *rc = (crsf_channels_t *)&crsf_tx_buf[3];
-      memset(rc, 0, 22);     // Clear all channels to 0 initially
-      
-      rc->ch0 = inputs.roll;
-      rc->ch1 = inputs.pitch;
-      rc->ch2 = inputs.throt;
-      rc->ch3 = inputs.yaw;
+    // 3. Map Channels into the packed payload buffer
+    crsf_channels_t *rc = (crsf_channels_t *)&crsf_tx_buf[3];
+    memset(rc, 0, 22);     // Clear all channels to 0 initially
+    
+    rc->ch0 = inputs.roll;
+    rc->ch1 = inputs.pitch;
+    rc->ch2 = inputs.throt;
+    rc->ch3 = inputs.yaw;
 
-      rc->ch4 = inputs.sw_arm; // ExpressLRS uses 5th channel for arming. 
-      rc->ch5 = inputs.sw_flight_mode;
-      rc->ch6 = inputs.aux2_sw;
-      rc->ch7 = inputs.aux3_sw;
-      rc->ch8 = inputs.aux1_sw;
-      rc->ch9 = inputs.sw_emergency_kill;
+    rc->ch4 = inputs.sw_arm; // ExpressLRS uses 5th channel for arming. 
+    rc->ch5 = inputs.sw_flight_mode;
+    rc->ch6 = inputs.aux2_sw;
+    rc->ch7 = inputs.aux3_sw;
+    rc->ch8 = inputs.aux1_sw;
+    rc->ch9 = inputs.sw_emergency_kill;
 
-      rc->ch10 = inputs.btn_left;
-      rc->ch11 = inputs.btn_right;
-      rc->ch12 = inputs.btn1;
-      rc->ch13 = inputs.btn2;
-      rc->ch14 = inputs.btn3;
-      rc->ch15 = inputs.btn4;
+    rc->ch10 = inputs.btn_left;
+    rc->ch11 = inputs.btn_right;
+    rc->ch12 = inputs.btn1;
+    rc->ch13 = inputs.btn2;
+    rc->ch14 = inputs.btn3;
+    rc->ch15 = inputs.btn4;
 
-      // 4. Calculate Checksum (Starts from Type byte to end of payload)
-      crsf_tx_buf[25] = crsf_crc8(&crsf_tx_buf[2], 23);
+    // 4. Calculate Checksum (Starts from Type byte to end of payload)
+    crsf_tx_buf[25] = crsf_crc8(&crsf_tx_buf[2], 23);
 
-      // 5. Transmit Frame (Push to Queue)
-      CrsfTxFrame_t rc_frame;
-      rc_frame.length = 26;
-      memcpy(rc_frame.data, crsf_tx_buf, rc_frame.length);
+    // 5. Transmit Frame (Push to Queue)
+    CrsfTxFrame_t rc_frame;
+    rc_frame.length = 26;
+    memcpy(rc_frame.data, crsf_tx_buf, rc_frame.length);
 
-      // Push to the queue with a 0ms timeout (if the queue is full, drop the frame to avoid lagging inputs)
-      osMessageQueuePut(crsfTxQueueHandle, &rc_frame, 0, 0);
+    // Timeout of 0 so RC generation loop never stalls    
+    osMessageQueuePut(rcTxQueueHandle, &rc_frame, 0, 0);
 
-      // Debugging output for monitoring inputs
-      // char dbg[160];
-      // int len = snprintf(dbg, sizeof(dbg),
-      //     "raw[0..3]=%4u %4u %4u %4u | crsf: roll=%4u pitch=%4u throt=%4u yaw=%4u | "
-      //     "btn=%4u sw2pos=%4u sw3pos=%4u\r\n",
-      //     adc_raw_buffer[0], adc_raw_buffer[1], adc_raw_buffer[2], adc_raw_buffer[3],
-      //     inputs.roll, inputs.pitch, inputs.throt, inputs.yaw,
-      //     inputs.btn1, inputs.sw_arm, inputs.sw_flight_mode);
-      // HAL_UART_Transmit(&huart3, (uint8_t*)dbg, len, HAL_MAX_DELAY);
+    // Debugging output for monitoring inputs
+    // char dbg[160];
+    // int len = snprintf(dbg, sizeof(dbg),
+    //     "raw[0..3]=%4u %4u %4u %4u | crsf: roll=%4u pitch=%4u throt=%4u yaw=%4u | "
+    //     "btn=%4u sw2pos=%4u sw3pos=%4u\r\n",
+    //     adc_raw_buffer[0], adc_raw_buffer[1], adc_raw_buffer[2], adc_raw_buffer[3],
+    //     inputs.roll, inputs.pitch, inputs.throt, inputs.yaw,
+    //     inputs.btn1, inputs.sw_arm, inputs.sw_flight_mode);
+    // HAL_UART_Transmit(&huart3, (uint8_t*)dbg, len, HAL_MAX_DELAY);
 
-      // CRSF runs fast. 10ms delay gives a 100Hz packet rate, which is a great baseline.
-      vTaskDelay(pdMS_TO_TICKS(10));
-    }
+    // CRSF runs fast. 10ms delay gives a 100Hz packet rate, which is a great baseline.
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
   /* USER CODE END StartInputTask */
 }
 
@@ -310,7 +314,7 @@ void MavlinkBridgeTask(void *argument)
       // 2. Build the CRSF MAVLink Frame (0x3A)
       crsf_mavlink_tx[0] = 0xEE;                  // Sync byte
       crsf_mavlink_tx[1] = bytes_read + 2;        // Length = Type (1) + Payload (bytes_read) + CRC (1)
-      crsf_mavlink_tx[2] = 0x3A;                  // Frame Type: CRSF_FRAMETYPE_MAVLINK
+      crsf_mavlink_tx[2] = 0xAA;                  // Frame Type: Standard CRSF_FRAMETYPE_MAVLINK
       
       // 3. Copy MAVLink payload into the frame
       memcpy(&crsf_mavlink_tx[3], usb_rx_buf, bytes_read);
@@ -323,8 +327,8 @@ void MavlinkBridgeTask(void *argument)
       mav_frame.length = bytes_read + 4;
       memcpy(mav_frame.data, crsf_mavlink_tx, mav_frame.length);
 
-      // Push to the queue. We can wait a couple of ticks here if the queue is temporarily full
-      osMessageQueuePut(crsfTxQueueHandle, &mav_frame, 0, pdMS_TO_TICKS(2));
+      // Push to MAVLink queue with 0 timeout to drop telemetry gracefully if congested      
+      osMessageQueuePut(mavlinkTxQueueHandle, &mav_frame, 0, 0);
     }
   }
   /* USER CODE END MavlinkBridgeTask */
@@ -344,12 +348,21 @@ void StartCrsfTxTask(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    // 1. Sleep here until a frame is pushed to the queue by RC or MAVLink tasks
-    if (osMessageQueueGet(crsfTxQueueHandle, &frame, NULL, osWaitForever) == osOK) {
-      // 2. Start the non-blocking DMA transfer
-      HAL_UART_Transmit_DMA(&huart3, frame.data, frame.length);
-      // 3. Sleep here until the DMA TX Complete interrupt fires
-      osSemaphoreAcquire(uart3TxDoneSemHandle, osWaitForever);
+    // 1. Check RC Queue first
+    if (osMessageQueueGet(rcTxQueueHandle, &frame, NULL, 0) == osOK) {
+      if (HAL_UART_Transmit_DMA(&huart3, frame.data, frame.length) == HAL_OK) {
+        osSemaphoreAcquire(uart3TxDoneSemHandle, osWaitForever);
+      }
+    }
+    // 2. Check MAVLink Queue only if no RC frame is pending
+    else if (osMessageQueueGet(mavlinkTxQueueHandle, &frame, NULL, 0) == osOK) {
+      if (HAL_UART_Transmit_DMA(&huart3, frame.data, frame.length) == HAL_OK) {
+        osSemaphoreAcquire(uart3TxDoneSemHandle, osWaitForever);
+      }
+    } 
+    // 3. Sleep briefly if both queues are empty
+    else {
+      vTaskDelay(pdMS_TO_TICKS(1));
     }
   }
   /* USER CODE END StartCrsfTxTask */
