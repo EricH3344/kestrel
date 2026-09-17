@@ -50,7 +50,7 @@
 
 ### OTHER OPTIONS: ###
 
--DAUTO_WIFI_ON_INTERVAL=60
+#-DAUTO_WIFI_ON_INTERVAL=60
 #-DHOME_WIFI_SSID=""
 #-DHOME_WIFI_PASSWORD=""
 
@@ -59,7 +59,6 @@
 
 # Turn on debug messages, if disabled then all debugging options (starting with DEBUG_) are disabled
 #-DDEBUG_LOG
-#-DDEBUG_INIT
 
 # For an ESP32S3 MCU, there are two options:
 # 1 - Pull-up on GPIO3, USB for JTAG (on MI_02), debug logging uses main UART.
@@ -98,4 +97,4 @@
 #-DDEBUG_OPENTX_SYNC
 
 # Use an ELRS TX and RX as a transparent UART over the air
--DUSE_AIRPORT_AT_BAUD=57600
+#-DUSE_AIRPORT_AT_BAUD=9600

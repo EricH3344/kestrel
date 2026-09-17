@@ -1088,6 +1088,44 @@ static void HandleUARTout()
   }
 }
 
+/**
+ * Tunnelled MAVLink from the handset (CRSF_FRAMETYPE_ELRS_MAVLINK_RAW). Feeds the same FIFO as the
+ * USB / backpack MAVLink inputs so the existing DataUlSender path uplinks it. Used by handsets that
+ * bridge a GCS over the CRSF UART on modules without a spare UART, USB or WiFi.
+ */
+static void HandsetMavlinkIn(const uint8_t *data, uint8_t len)
+{
+  if (config.GetLinkMode() != TX_MAVLINK_MODE || len == 0)
+  {
+    return;
+  }
+  uartInputBuffer.lock();
+  if (uartInputBuffer.free() >= len)
+  {
+    uartInputBuffer.pushBytes(data, len);
+  }
+  uartInputBuffer.unlock();
+}
+
+/**
+ * Downlink counterpart of HandsetMavlinkIn: wrap raw MAVLink bytes in CRSF_FRAMETYPE_ELRS_MAVLINK_RAW
+ * frames and queue them to the handset. Chunked so each frame fits CRSF_MAX_PACKET_LEN.
+ */
+static void HandsetMavlinkOut(const uint8_t *data, uint8_t len)
+{
+  uint8_t frameBuf[CRSF_MAX_PACKET_LEN];
+  const auto frame = (crsf_header_t *)frameBuf;
+  while (len > 0)
+  {
+    const uint8_t chunk = std::min(len, (uint8_t)CRSF_MAVLINK_RAW_MAX_PAYLOAD);
+    memcpy(frame->payload, data, chunk);
+    crsfRouter.SetHeaderAndCrc(frame, CRSF_FRAMETYPE_ELRS_MAVLINK_RAW, CRSF_FRAME_SIZE(chunk));
+    crsfRouter.deliverMessageTo(CRSF_ADDRESS_RADIO_TRANSMITTER, frame);
+    data += chunk;
+    len -= chunk;
+  }
+}
+
 static void HandleUARTin()
 {
   if (firmwareOptions.is_airport)
@@ -1414,16 +1452,26 @@ void setup()
     // When a CRSF handset is detected, it will add itself to the router
 
     handset->registerCallbacks(UARTconnected, firmwareOptions.is_airport ? nullptr : UARTdisconnected);
+    handset->setRawMavlinkCallback(HandsetMavlinkIn);
 
     config.Load(); // Load the stored values from eeprom
 
-    // AirPort downlink rides the telemetry slots. The 900MHz rate defaults (1:32..1:64) leave
-    // only a few bytes/s coming back, and with no handset or WiFi in this mode there is no
-    // other way to raise it. SetTlm is a no-op when already set, so this does not churn EEPROM.
-    // Force TLM ratio of 1:2 for balanced bi-dir link
+    // This module has no WiFi and is driven by a custom CRSF handset that tunnels a MAVLink GCS
+    // over the handset UART (see HandsetMavlinkIn/Out), so the link setup is baked in at boot.
+    // The handset can still change rate/power at runtime via CRSF parameter writes; these are
+    // the power-on defaults. All setters are no-ops when already set, so this does not churn NVS.
     if (firmwareOptions.is_airport)
     {
+        // AirPort downlink rides the telemetry slots; 1:2 gives a balanced bi-directional link.
         config.SetTlm(TLM_RATIO_1_2);
+    }
+    else
+    {
+        config.SetLinkMode(TX_MAVLINK_MODE); // also forces TLM 1:2 and the 16ch/2 switch mode
+        // F1000 8ch: highest MAVLink throughput / lowest latency. Handset drops to 200Hz Full for range.
+        config.SetRate(enumRatetoIndexSafe(RATE_FSK_900_1000HZ_8CH));
+        config.SetPower(PWR_100mW);     // level 3 -> power_values[3] = register 22 (~20.6 dBm)
+        config.SetDynamicPower(0);
     }
 
     Radio.currFreq = FHSSgetInitialFreq(); //set frequency first or an error will occur!!!
@@ -1545,6 +1593,8 @@ void loop()
           convert_mavlink_to_crsf_telem(CRSF_ADDRESS_RADIO_TRANSMITTER, CRSFinBuffer, count);
           // forward raw mavlink data to USB
           TxUSB->write(CRSFinBuffer + CRSF_FRAME_NOT_COUNTED_BYTES, count);
+          // And tunnelled to the handset
+          HandsetMavlinkOut(CRSFinBuffer + CRSF_FRAME_NOT_COUNTED_BYTES, count);
           // And to the backpack if we have one
           if (TxUSB != BackpackOrLogStrm)
           {
