@@ -115,7 +115,7 @@ enum {
 
 /* ---- Link RX ---- */
 #define LINK_RX_DMA_BYTES      512     /* circular DMA ring, drained on idle/half/full */
-#define LINK_RX_STREAM_BYTES   1024    /* ISR -> mavDownlinkTask */
+#define LINK_RX_STREAM_BYTES   1024    /* ISR -> linkRxTask */
 #define MODULE_ALIVE_MS        1000    /* no valid frame for this long = module gone */
 
 /* ---- GCS serial (alternative to USB CDC; both feed the same streams) ---- */
@@ -204,10 +204,10 @@ const osThreadAttr_t mavUplinkTask_attributes = {
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
-/* Definitions for mavDownlinkTask */
-osThreadId_t mavDownlinkTaskHandle;
-const osThreadAttr_t mavDownlinkTask_attributes = {
-  .name = "mavDownlinkTask",
+/* Definitions for linkRxTask */
+osThreadId_t linkRxTaskHandle;
+const osThreadAttr_t linkRxTask_attributes = {
+  .name = "linkRxTask",
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
@@ -238,7 +238,7 @@ static void rate_switch_update(int module_alive, TickType_t now);
 void StartInputTask(void *argument);
 void StartLinkTxTask(void *argument);
 void StartMavUplinkTask(void *argument);
-void StartMavDownlinkTask(void *argument);
+void StartLinkRxTask(void *argument);
 void StartHealthTask(void *argument);
 
 extern void MX_USB_DEVICE_Init(void);
@@ -311,8 +311,8 @@ void MX_FREERTOS_Init(void) {
   /* creation of mavUplinkTask */
   mavUplinkTaskHandle = osThreadNew(StartMavUplinkTask, NULL, &mavUplinkTask_attributes);
 
-  /* creation of mavDownlinkTask */
-  mavDownlinkTaskHandle = osThreadNew(StartMavDownlinkTask, NULL, &mavDownlinkTask_attributes);
+  /* creation of linkRxTask */
+  linkRxTaskHandle = osThreadNew(StartLinkRxTask, NULL, &linkRxTask_attributes);
 
   /* creation of healthTask */
   healthTaskHandle = osThreadNew(StartHealthTask, NULL, &healthTask_attributes);
@@ -338,7 +338,7 @@ void StartInputTask(void *argument)
   /* init code for USB_DEVICE */
   MX_USB_DEVICE_Init();
   /* USER CODE BEGIN StartInputTask */
-uint16_t ch[CRSF_NUM_CHANNELS];
+  uint16_t ch[CRSF_NUM_CHANNELS];
 
   inputs_init();
 
@@ -398,16 +398,16 @@ uint8_t buf[128];
   /* USER CODE END StartMavUplinkTask */
 }
 
-/* USER CODE BEGIN Header_StartMavDownlinkTask */
+/* USER CODE BEGIN Header_StartLinkRxTask */
 /**
 * @brief Deframes the module's downlink: 0xAA MAVLink -> USB, 0x14 -> link stats.
 */
-/* USER CODE END Header_StartMavDownlinkTask */
-void StartMavDownlinkTask(void *argument)
+/* USER CODE END Header_StartLinkRxTask */
+void StartLinkRxTask(void *argument)
 {
-  /* USER CODE BEGIN StartMavDownlinkTask */
+  /* USER CODE BEGIN StartLinkRxTask */
   link_rx_run();
-  /* USER CODE END StartMavDownlinkTask */
+  /* USER CODE END StartLinkRxTask */
 }
 
 /* USER CODE BEGIN Header_StartHealthTask */
@@ -638,7 +638,7 @@ static void link_tx_run(void)
 
 /* ================================ link rx ================================ */
 /* Circular RX DMA -> HAL_UARTEx_RxEventCallback (idle/half/full) -> s_rx_stream
- * -> mavDownlinkTask deframes. 0xAA payloads go to USB verbatim, 0x14 is kept
+ * -> linkRxTask deframes. 0xAA payloads go to USB verbatim, 0x14 is kept
  * for rf_mode / debugging, everything else is counted and dropped. */
 
 static void link_rx_init(void)
