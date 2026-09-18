@@ -24,8 +24,10 @@
 /* USER CODE BEGIN INCLUDE */
 #include "FreeRTOS.h"
 #include "stream_buffer.h"
+#include "cmsis_os.h"
+#include <string.h>
 
-extern StreamBufferHandle_t usbRxStreamBuffer;
+extern StreamBufferHandle_t gcsRxStreamBuffer;
 /* USER CODE END INCLUDE */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -65,6 +67,7 @@ extern StreamBufferHandle_t usbRxStreamBuffer;
   */
 
 /* USER CODE BEGIN PRIVATE_DEFINES */
+#define USB_TX_WAIT_TICKS  2   /* usb_tx() wait for the previous IN packet */
 /* USER CODE END PRIVATE_DEFINES */
 
 /**
@@ -265,7 +268,7 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 {
   /* USER CODE BEGIN 6 */
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-  xStreamBufferSendFromISR(usbRxStreamBuffer, Buf, *Len, &xHigherPriorityTaskWoken);
+  xStreamBufferSendFromISR(gcsRxStreamBuffer, Buf, *Len, &xHigherPriorityTaskWoken);
   USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
   USBD_CDC_ReceivePacket(&hUsbDeviceFS);
   portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
@@ -322,7 +325,18 @@ static int8_t CDC_TransmitCplt_FS(uint8_t *Buf, uint32_t *Len, uint8_t epnum)
 }
 
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_IMPLEMENTATION */
-
+/* Task-context send: wait (bounded) for the previous packet, copy, transmit.
+ * Returns USBD_OK, USBD_BUSY (host not draining) or USBD_FAIL (no host). */
+uint8_t usb_tx(const uint8_t *buf, uint16_t len)
+{
+  if (hUsbDeviceFS.dev_state != USBD_STATE_CONFIGURED || len > APP_TX_DATA_SIZE) return USBD_FAIL;
+  USBD_CDC_HandleTypeDef *hcdc = (USBD_CDC_HandleTypeDef*)hUsbDeviceFS.pClassData;
+  for (int i = 0; hcdc->TxState != 0 && i < USB_TX_WAIT_TICKS; i++) osDelay(1);
+  if (hcdc->TxState != 0) return USBD_BUSY;
+  memcpy(UserTxBufferFS, buf, len);
+  USBD_CDC_SetTxBuffer(&hUsbDeviceFS, UserTxBufferFS, len);
+  return USBD_CDC_TransmitPacket(&hUsbDeviceFS);
+}
 /* USER CODE END PRIVATE_FUNCTIONS_IMPLEMENTATION */
 
 /**

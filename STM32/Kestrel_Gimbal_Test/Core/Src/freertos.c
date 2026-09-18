@@ -45,13 +45,22 @@ typedef struct {
   uint32_t mav_drop;    /* MAVLink bytes dropped, uplink stream full */
   uint32_t uart_err;    /* TX timeouts / aborts / DMA start failures */
 } LinkTxStats;
+typedef struct {
+  uint32_t frames;      /* CRC-valid frames from the module */
+  uint32_t mav_bytes;   /* MAVLink bytes forwarded to USB */
+  uint32_t usb_drop;    /* MAVLink frames dropped: USB host present but not reading */
+  uint32_t gcs_uart_drop; /* MAVLink frames dropped: GCS_UART still busy with the last one */
+  uint32_t rx_drop;     /* bytes lost, s_rx_stream full */
+  uint32_t uart_err;    /* RX framing/overrun errors (RX DMA re-armed each time) */
+} LinkRxStats;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define MODULE_UART        (&huart6)   /* PC6/PC7, 921600: CRSF RC + 0xAA MAVLink to ELRS module */
 #define MODULE_UART_INST   USART6
-#define DEBUG_UART         (&huart3)   /* PD8/PD9, 115200 (= Nucleo ST-LINK VCP) */
+#define GCS_UART           (&huart3)   /* PD8/PD9, 115200: MAVLink to a serial GCS (Nucleo: ST-LINK VCP; PCB: debug header) */
+#define GCS_UART_INST      USART3
 #define RC_TIMER           (&htim2)    /* 250 Hz: TRGO -> ADC, IRQ -> linkTxTask */
 
 /* ADC1 scan order = AETR: PC0, PC3, PA3, PA5 */
@@ -103,6 +112,25 @@ enum {
 #define LINK_TX_NOTIFY_TXDONE  (1uL << 1)  /* DMA transmission complete */
 #define LINK_TX_NOTIFY_ERROR   (1uL << 2)  /* UART error occurred */
 #define LINK_TX_NOTIFY_ALL     0xFFFFFFFFuL  /* all notification bits */
+
+/* ---- Link RX ---- */
+#define LINK_RX_DMA_BYTES      512     /* circular DMA ring, drained on idle/half/full */
+#define LINK_RX_STREAM_BYTES   1024    /* ISR -> mavDownlinkTask */
+#define MODULE_ALIVE_MS        1000    /* no valid frame for this long = module gone */
+
+/* ---- GCS serial (alternative to USB CDC; both feed the same streams) ---- */
+#define GCS_UART_RX_BYTES      64      /* receive-to-idle chunk */
+#define GCS_UART_TX_WAIT_TICKS 8       /* a 60 B frame takes 5.2 ms at 115200 */
+
+/* ---- ELRS module ---- */
+#define ELRS_PARAM_PACKET_RATE 1       /* parameter index of "Packet Rate" */
+#define ELRS_RATE_F1000        19      /* write value = 19 - rate table index */
+#define ELRS_RATE_200FULL      17      /* "long range": LoRa 200 Hz, 8ch */
+#define ELRS_RF_MODE_F1000     11      /* rf_mode in LINK_STATISTICS */
+#define ELRS_RF_MODE_200FULL   6
+#define ELRS_UPLINK_BPS_F1000  2500    /* MAVLink bytes/s the air link carries up */
+#define ELRS_UPLINK_BPS_200FULL 500
+#define RATE_WRITE_LOCKOUT_MS  2000    /* min gap between Packet Rate writes */
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -114,12 +142,9 @@ enum {
 /* USER CODE BEGIN Variables */
 uint16_t adc_raw_buffer[NUM_ADC_CHANNELS];
 
-StreamBufferHandle_t usbRxStreamBuffer;
-const size_t usbRxStreamBufferSize = 512;
-const size_t usbRxStreamBufferTriggerLevel = 1;
-
-#define MAVLINK_DL_DMA_BUF_SIZE 512
-uint8_t mavlink_dl_dma_buf[MAVLINK_DL_DMA_BUF_SIZE];
+StreamBufferHandle_t gcsRxStreamBuffer;
+const size_t gcsRxStreamBufferSize = 512;
+const size_t gcsRxStreamBufferTriggerLevel = 1;
 
 /* inputs */
 static const DigitalInput s_pins[NUM_DIGITAL_INPUTS] = {
@@ -138,6 +163,25 @@ static osMutexId_t s_rc_mutex;
 static uint16_t s_rc_channels[CRSF_NUM_CHANNELS];
 static StreamBufferHandle_t s_mav_stream;
 static LinkTxStats s_stats;
+
+/* link rx */
+static uint8_t s_rx_dma[LINK_RX_DMA_BYTES];
+static uint16_t s_rx_pos;                  /* ring bytes already pushed to s_rx_stream */
+static StreamBufferHandle_t s_rx_stream;
+static LinkRxStats s_rx_stats;
+static crsf_link_stats_t s_link_stats;     /* last LINK_STATISTICS; rf_mode shows the rate */
+static TickType_t s_rx_last_tick;          /* last CRC-valid frame from the module */
+
+/* gcs serial */
+static uint8_t s_gcs_rx_buf[GCS_UART_RX_BYTES];
+static uint8_t s_gcs_tx_buf[CRSF_MAX_PAYLOAD];
+static uint8_t s_gcs_uart_seen;            /* something talked on GCS_UART: send downlink there too */
+
+/* range switch (AUX2_SW -> ELRS "Packet Rate") */
+static uint8_t s_rate_wanted = ELRS_RATE_F1000;
+static uint8_t s_rate_applied;             /* last value written, 0 = unknown */
+static uint8_t s_rate_pending;             /* nonzero: linkTxTask sends this write */
+static TickType_t s_rate_write_tick;
 /* USER CODE END Variables */
 /* Definitions for inputTask */
 osThreadId_t inputTaskHandle;
@@ -183,6 +227,12 @@ static uint16_t sticks_crsf(unsigned axis);
 static void inputs_build_channels(uint16_t ch[CRSF_NUM_CHANNELS]);
 static void link_tx_init(void);
 static void link_tx_run(void);
+static void link_rx_init(void);
+static void link_rx_arm(void);
+static void link_rx_run(void);
+static void gcs_uart_arm(void);
+static void gcs_uart_tx(const uint8_t *p, size_t n);
+static void rate_switch_update(int module_alive, TickType_t now);
 /* USER CODE END FunctionPrototypes */
 
 void StartInputTask(void *argument);
@@ -220,13 +270,15 @@ void vApplicationMallocFailedHook(void)
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
   link_tx_init();
+  link_rx_init();
 
   if (HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_raw_buffer, NUM_ADC_CHANNELS) != HAL_OK) {
     Error_Handler();
   }
 
-  usbRxStreamBuffer = xStreamBufferCreate(usbRxStreamBufferSize, usbRxStreamBufferTriggerLevel);
-  if (usbRxStreamBuffer == NULL) { Error_Handler(); }
+  gcsRxStreamBuffer = xStreamBufferCreate(gcsRxStreamBufferSize, gcsRxStreamBufferTriggerLevel);
+  if (gcsRxStreamBuffer == NULL) { Error_Handler(); }
+  gcs_uart_arm();
 
   if (HAL_TIM_Base_Start_IT(RC_TIMER) != HAL_OK) {
     Error_Handler();
@@ -325,8 +377,8 @@ void StartLinkTxTask(void *argument)
 
 /* USER CODE BEGIN Header_StartMavUplinkTask */
 /**
-* @brief Forwards MAVLink commands from USB to the drone uplink stream.
-* Receives from usbRxStreamBuffer (populated by USB ISR), queues to s_mav_stream for linkTxTask.
+* @brief Forwards MAVLink from the GCS (USB CDC or GCS_UART) to the drone uplink stream.
+* Receives from gcsRxStreamBuffer (filled by the USB and USART3 ISRs), queues to s_mav_stream for linkTxTask.
 * Drops bytes if uplink buffer is full.
 */
 /* USER CODE END Header_StartMavUplinkTask */
@@ -337,7 +389,7 @@ uint8_t buf[128];
 
   for(;;)
   {
-    size_t n = xStreamBufferReceive(usbRxStreamBuffer, buf, sizeof(buf), portMAX_DELAY);
+    size_t n = xStreamBufferReceive(gcsRxStreamBuffer, buf, sizeof(buf), portMAX_DELAY);
     if (n > 0) {
       size_t sent = xStreamBufferSend(s_mav_stream, buf, n, pdMS_TO_TICKS(20));
       if (sent < n) s_stats.mav_drop += (uint32_t)(n - sent);
@@ -348,27 +400,19 @@ uint8_t buf[128];
 
 /* USER CODE BEGIN Header_StartMavDownlinkTask */
 /**
-* @brief Function implementing the mavDownlinkTask thread.
-* @param argument: Not used
-* @retval None
+* @brief Deframes the module's downlink: 0xAA MAVLink -> USB, 0x14 -> link stats.
 */
 /* USER CODE END Header_StartMavDownlinkTask */
 void StartMavDownlinkTask(void *argument)
 {
   /* USER CODE BEGIN StartMavDownlinkTask */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+  link_rx_run();
   /* USER CODE END StartMavDownlinkTask */
 }
 
 /* USER CODE BEGIN Header_StartHealthTask */
 /**
-* @brief Function implementing the healthTask thread.
-* @param argument: Not used
-* @retval None
+* @brief Watchdog (only while RC frames flow), LEDs, range switch.
 */
 /* USER CODE END Header_StartHealthTask */
 void StartHealthTask(void *argument)
@@ -378,11 +422,15 @@ void StartHealthTask(void *argument)
 
   for(;;)
   {
+    TickType_t now = xTaskGetTickCount();
     if (s_stats.rc_frames_sent != last_rc_frames) {
       last_rc_frames = s_stats.rc_frames_sent;
       HAL_IWDG_Refresh(&hiwdg);
       LED_TOGGLE(LED_STATUS);
     }
+    int module_alive = s_rx_stats.frames != 0 && (now - s_rx_last_tick) < pdMS_TO_TICKS(MODULE_ALIVE_MS);
+    LED_SET(LED_LINK, module_alive);
+    rate_switch_update(module_alive, now);
     osDelay(50);
   }
   /* USER CODE END StartHealthTask */
@@ -481,8 +529,10 @@ static void inputs_build_channels(uint16_t ch[CRSF_NUM_CHANNELS])
   ch[5] = crsf_3pos(IN_SW_FLIGHT_MODE1, IN_SW_FLIGHT_MODE2);
   ch[6] = crsf_2pos(IN_SW_EMERGENCY_KILL);
   ch[7] = crsf_2pos(IN_AUX1_SW);
-  ch[8] = crsf_2pos(IN_AUX2_SW);
+  ch[8] = CRSF_CH_MID;            /* AUX2_SW is the range switch, not an RC channel */
   ch[9] = crsf_3pos(IN_AUX3_SW1, IN_AUX3_SW2);
+
+  s_rate_wanted = s_stable[IN_AUX2_SW] ? ELRS_RATE_200FULL : ELRS_RATE_F1000;
 
   ch[10] = crsf_2pos(IN_BTN_LEFT);
   ch[11] = crsf_2pos(IN_BTN_RIGHT);
@@ -494,8 +544,9 @@ static void inputs_build_channels(uint16_t ch[CRSF_NUM_CHANNELS])
 
 /* ================================ link tx ================================ */
 /* linkTxTask is woken only by ISR notifications: TIM2 tick, UART TX done,
- * UART error. Each tick: one RC frame first, then MAVLink chunks until the
- * frame period is nearly used up. Every DMA wait is bounded. */
+ * UART error. Each tick: one RC frame first, a pending control frame, then
+ * MAVLink chunks gated by a token bucket sized to the air link. Every DMA
+ * wait is bounded. */
 
 /* Initialize link TX: mutex, uplink buffer, channels, stats */
 static void link_tx_init(void)
@@ -540,11 +591,12 @@ static int link_tx_send(const uint8_t *buf, size_t n)
   return 1;
 }
 
-/* Main transmission loop: send RC frame every 250 Hz tick, fill remaining time with MAVLink uplink */
+/* Main transmission loop: RC frame every tick, then control, then rate-limited MAVLink */
 static void link_tx_run(void)
 {
   uint8_t tx_buf[CRSF_MAX_FRAME_SIZE];
   uint8_t mav_chunk[CRSF_MAX_PAYLOAD];
+  uint32_t budget = 0;   /* MAVLink bytes the air link can take right now */
 
   for (;;) {
     uint32_t notif = 0;
@@ -553,7 +605,7 @@ static void link_tx_run(void)
 
     TickType_t deadline = xTaskGetTickCount() + FRAME_TICKS - FRAME_MARGIN_TICKS;
 
-    /* 1. Send RC frame (priority) */
+    /* 1. RC frame (priority) */
     uint16_t ch[CRSF_NUM_CHANNELS];
     osMutexAcquire(s_rc_mutex, osWaitForever);
     memcpy(ch, s_rc_channels, sizeof(ch));
@@ -562,14 +614,109 @@ static void link_tx_run(void)
     size_t n = crsf_build_rc(tx_buf, ch);
     if (link_tx_send(tx_buf, n)) s_stats.rc_frames_sent++;
 
-    /* 2. Send MAVLink uplink (tablet->drone) while time remains before next tick */
-    while ((int32_t)(xTaskGetTickCount() - deadline) < 0) {
-      size_t got = xStreamBufferReceive(s_mav_stream, mav_chunk, sizeof(mav_chunk), 0);
+    /* 2. Pending Packet Rate write (range switch); retried next tick on failure */
+    if (s_rate_pending) {
+      n = crsf_build_param_write(tx_buf, ELRS_PARAM_PACKET_RATE, s_rate_pending);
+      if (link_tx_send(tx_buf, n)) s_rate_pending = 0;
+    }
+
+    /* 3. MAVLink uplink (tablet->drone): the module's FIFO drops silently when
+     * fed faster than the air rate, so meter it. Small chunks go out at once. */
+    uint32_t bps = (s_rate_wanted == ELRS_RATE_200FULL) ? ELRS_UPLINK_BPS_200FULL : ELRS_UPLINK_BPS_F1000;
+    budget += bps / RC_RATE_HZ;
+    if (budget > 2 * CRSF_MAX_PAYLOAD) budget = 2 * CRSF_MAX_PAYLOAD;
+    while (budget > 0 && (int32_t)(xTaskGetTickCount() - deadline) < 0) {
+      size_t want = budget < sizeof(mav_chunk) ? budget : sizeof(mav_chunk);
+      size_t got = xStreamBufferReceive(s_mav_stream, mav_chunk, want, 0);
       if (got == 0) break;
-      size_t fn = crsf_build_mavlink(tx_buf, mav_chunk, got);
-      if (link_tx_send(tx_buf, fn)) s_stats.mav_bytes_sent += (uint32_t)got;
+      budget -= got;
+      n = crsf_build_mavlink(tx_buf, mav_chunk, got);
+      if (link_tx_send(tx_buf, n)) s_stats.mav_bytes_sent += (uint32_t)got;
     }
   }
+}
+
+/* ================================ link rx ================================ */
+/* Circular RX DMA -> HAL_UARTEx_RxEventCallback (idle/half/full) -> s_rx_stream
+ * -> mavDownlinkTask deframes. 0xAA payloads go to USB verbatim, 0x14 is kept
+ * for rf_mode / debugging, everything else is counted and dropped. */
+
+static void link_rx_init(void)
+{
+  s_rx_stream = xStreamBufferCreate(LINK_RX_STREAM_BYTES, 1);
+  if (s_rx_stream == NULL) Error_Handler();
+  link_rx_arm();
+}
+
+/* (Re)start the RX ring; also called from the error callback after the HAL stops it */
+static void link_rx_arm(void)
+{
+  s_rx_pos = 0;
+  if (HAL_UARTEx_ReceiveToIdle_DMA(MODULE_UART, s_rx_dma, LINK_RX_DMA_BYTES) != HAL_OK) s_rx_stats.uart_err++;
+}
+
+static void link_rx_run(void)
+{
+  static crsf_deframer_t df;
+  uint8_t buf[64];
+
+  for (;;) {
+    size_t n = xStreamBufferReceive(s_rx_stream, buf, sizeof(buf), portMAX_DELAY);
+    for (size_t i = 0; i < n; i++) {
+      const uint8_t *frame; size_t len;
+      if (!crsf_deframe_push(&df, buf[i], &frame, &len)) continue;
+      s_rx_last_tick = xTaskGetTickCount();
+      s_rx_stats.frames++;
+      switch (frame[2]) {
+      case CRSF_FRAMETYPE_ELRS_MAVLINK_RAW:
+        s_rx_stats.mav_bytes += (uint32_t)(len - 4);
+        if (usb_tx(&frame[3], (uint16_t)(len - 4)) == USBD_BUSY) s_rx_stats.usb_drop++;
+        if (s_gcs_uart_seen) gcs_uart_tx(&frame[3], len - 4);
+        break;
+      case CRSF_FRAMETYPE_LINK_STATISTICS:
+        if (len - 4 >= sizeof(s_link_stats)) memcpy(&s_link_stats, &frame[3], sizeof(s_link_stats));
+        break;
+      default:
+        break;
+      }
+    }
+  }
+}
+
+/* ============================== gcs serial =============================== */
+/* Same MAVLink stream as USB CDC, on GCS_UART. Uplink bytes always go into
+ * gcsRxStreamBuffer; downlink is mirrored here only once something has been
+ * received on this port, so an unconnected header costs nothing. */
+
+/* (Re)start receive-to-idle; also called from the callbacks after each chunk / error */
+static void gcs_uart_arm(void)
+{
+  HAL_UARTEx_ReceiveToIdle_IT(GCS_UART, s_gcs_rx_buf, GCS_UART_RX_BYTES);
+}
+
+/* Wait (bounded) for the previous frame to leave, copy, send by interrupt */
+static void gcs_uart_tx(const uint8_t *p, size_t n)
+{
+  for (int i = 0; GCS_UART->gState != HAL_UART_STATE_READY && i < GCS_UART_TX_WAIT_TICKS; i++) osDelay(1);
+  if (GCS_UART->gState != HAL_UART_STATE_READY) { s_rx_stats.gcs_uart_drop++; return; }
+  memcpy(s_gcs_tx_buf, p, n);
+  if (HAL_UART_Transmit_IT(GCS_UART, s_gcs_tx_buf, (uint16_t)n) != HAL_OK) s_rx_stats.gcs_uart_drop++;
+}
+
+/* ============================== range switch ============================= */
+/* AUX2_SW picks the air rate. The module boots in F1000 and keeps the last
+ * written rate, so re-assert the switch position whenever the module (re)appears. */
+static void rate_switch_update(int module_alive, TickType_t now)
+{
+  if (!module_alive) {
+    s_rate_applied = 0;
+    return;
+  }
+  if (s_rate_wanted == s_rate_applied || s_rate_pending) return;
+  if (s_rate_applied != 0 && (now - s_rate_write_tick) < pdMS_TO_TICKS(RATE_WRITE_LOCKOUT_MS)) return;
+  s_rate_applied = s_rate_wanted;
+  s_rate_write_tick = now;
+  s_rate_pending = s_rate_wanted;
 }
 
 /* ============================= HAL callbacks ============================= */
@@ -582,11 +729,49 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
   }
 }
 
-/* UART error interrupt: abort transfer, clear error state, signal task */
+/* RX ring advanced (idle line, half or full): push [s_rx_pos, Size) to the task */
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
+{
+  BaseType_t hpw = pdFALSE;
+  if (huart->Instance == GCS_UART_INST) {   /* GCS serial: chunk in, re-arm */
+    xStreamBufferSendFromISR(gcsRxStreamBuffer, s_gcs_rx_buf, Size, &hpw);
+    s_gcs_uart_seen = 1;
+    gcs_uart_arm();
+    portYIELD_FROM_ISR(hpw);
+    return;
+  }
+  if (huart->Instance != MODULE_UART_INST || Size == s_rx_pos) return;
+  size_t sent = 0;
+  if (Size > s_rx_pos) {
+    sent = xStreamBufferSendFromISR(s_rx_stream, &s_rx_dma[s_rx_pos], Size - s_rx_pos, &hpw);
+    s_rx_stats.rx_drop += (Size - s_rx_pos) - sent;
+  } else {                      /* wrapped: tail of the ring, then the head */
+    sent = xStreamBufferSendFromISR(s_rx_stream, &s_rx_dma[s_rx_pos], LINK_RX_DMA_BYTES - s_rx_pos, &hpw);
+    s_rx_stats.rx_drop += (LINK_RX_DMA_BYTES - s_rx_pos) - sent;
+    if (Size) {
+      sent = xStreamBufferSendFromISR(s_rx_stream, &s_rx_dma[0], Size, &hpw);
+      s_rx_stats.rx_drop += Size - sent;
+    }
+  }
+  s_rx_pos = Size % LINK_RX_DMA_BYTES;
+  portYIELD_FROM_ISR(hpw);
+}
+
+/* UART error. Any RX error makes the HAL stop RX DMA: re-arm it. A TX DMA
+ * error ends the transfer with gState READY: release linkTxTask. */
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
-  if (huart->Instance == MODULE_UART_INST) {
-    HAL_UART_Abort(huart);
+  if (huart->Instance == GCS_UART_INST) {
+    if (huart->RxState == HAL_UART_STATE_READY) gcs_uart_arm();   /* overrun stopped RX */
+    return;
+  }
+  if (huart->Instance != MODULE_UART_INST) return;
+  uint32_t err = huart->ErrorCode;         /* re-arming clears it */
+  if (huart->RxState == HAL_UART_STATE_READY) {
+    s_rx_stats.uart_err++;
+    link_rx_arm();
+  }
+  if ((err & HAL_UART_ERROR_DMA) && huart->gState == HAL_UART_STATE_READY) {
     link_tx_notify_from_isr(LINK_TX_NOTIFY_TXDONE | LINK_TX_NOTIFY_ERROR);
   }
 }

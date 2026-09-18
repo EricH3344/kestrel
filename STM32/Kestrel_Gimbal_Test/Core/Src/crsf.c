@@ -15,6 +15,7 @@ _Static_assert(CRSF_NUM_CHANNELS * 11 == CRSF_RC_PAYLOAD_BYTES * 8,
 _Static_assert(CRSF_RC_FRAME_SIZE == 26, "RC frame must be 26 bytes on the wire");
 _Static_assert(CRSF_MAX_PAYLOAD + 4 <= CRSF_MAX_FRAME_SIZE,
                "wrapped MAVLink frame must fit CRSF_MAX_FRAME_SIZE");
+_Static_assert(sizeof(crsf_link_stats_t) == 10, "LINK_STATISTICS payload is 10 bytes");
 
 /* --------------------------------------------------------------------------
  * The 256-byte lookup table is built dynamically from the polynomial 0xD5
@@ -95,7 +96,7 @@ void crsf_unpack_channels(const uint8_t in[CRSF_RC_PAYLOAD_BYTES],
  * ------------------------------------------------------------------------ */
 size_t crsf_build_rc(uint8_t *buf, const uint16_t ch[CRSF_NUM_CHANNELS])
 {
-    buf[0] = CRSF_ADDR_HANDSET;                       /* handset sync byte */
+    buf[0] = CRSF_SYNC_TX;                            /* handset sync byte */
     buf[1] = CRSF_RC_PAYLOAD_BYTES + 2;               /* type(1) + payload(22) + crc(1) */
     buf[2] = CRSF_FRAMETYPE_RC_CHANNELS_PACKED;       /* frame type */
     crsf_pack_channels(ch, &buf[3]);                  /* pack 16 channels into 22 bytes */
@@ -113,12 +114,36 @@ size_t crsf_build_mavlink(uint8_t *buf, const uint8_t *payload, size_t n)
         assert(0 && "crsf_build_mavlink: payload > CRSF_MAX_PAYLOAD");
         n = CRSF_MAX_PAYLOAD;
     }
-    buf[0] = CRSF_ADDR_HANDSET;                       /* handset sync byte */
+    buf[0] = CRSF_SYNC_TX;                            /* handset sync byte */
     buf[1] = (uint8_t)(n + 2);                        /* type(1) + payload(n) + crc(1) */
     buf[2] = CRSF_FRAMETYPE_ELRS_MAVLINK_RAW;         /* mavlink frame type */
     memcpy(&buf[3], payload, n);                      /* copy mavlink payload */
     buf[3 + n] = crsf_crc8(&buf[2], 1 + n);           /* crc over type + payload */
-    return n + 4;                                     /* addr+len+type+payload+crc */
+    return n + 4;                                     /* sync+len+type+payload+crc */
+}
+
+size_t crsf_build_ext(uint8_t *buf, uint8_t type, uint8_t dest, uint8_t orig,
+                      const uint8_t *p, size_t n)
+{
+    if (n > CRSF_MAX_PAYLOAD - 2) {
+        assert(0 && "crsf_build_ext: payload too long");
+        n = CRSF_MAX_PAYLOAD - 2;
+    }
+    buf[0] = CRSF_SYNC_TX;
+    buf[1] = (uint8_t)(n + 4);                        /* type + dest + orig + n + crc */
+    buf[2] = type;
+    buf[3] = dest;
+    buf[4] = orig;
+    memcpy(&buf[5], p, n);
+    buf[5 + n] = crsf_crc8(&buf[2], 3 + n);           /* crc over type + dest + orig + p */
+    return n + 6;
+}
+
+size_t crsf_build_param_write(uint8_t *buf, uint8_t idx, uint8_t val)
+{
+    const uint8_t p[2] = { idx, val };
+    return crsf_build_ext(buf, CRSF_FRAMETYPE_PARAMETER_WRITE,
+                          CRSF_ADDR_MODULE, CRSF_ADDR_HANDSET, p, sizeof p);
 }
 
 /* --------------------------------------------------------------------------
@@ -145,4 +170,48 @@ int crsf_parse(const uint8_t *frame, size_t len,
         *payload_len = lenfield - 2;     /* strip type and crc */
     }
     return frame[2];                     /* frame type */
+}
+
+/* --------------------------------------------------------------------------
+ * Downlink deframer: hunt 0xC8, check the length byte, validate the CRC.
+ * On a bad frame the leading byte is dropped and the buffered bytes are
+ * re-scanned, so a real frame hiding inside garbage is still delivered.
+ * ------------------------------------------------------------------------ */
+int crsf_deframe_push(crsf_deframer_t *d, uint8_t b,
+                      const uint8_t **frame, size_t *len)
+{
+    if (d->done) {                                   /* discard last call's frame */
+        d->n -= d->done;
+        memmove(d->buf, d->buf + d->done, d->n);
+        d->done = 0;
+    }
+    if (d->n == 0 && b != CRSF_SYNC_RX) {
+        return 0;                                    /* hunting for sync */
+    }
+    d->buf[d->n++] = b;
+
+    for (;;) {
+        if (d->n < 2) {
+            return 0;
+        }
+        unsigned total = (unsigned)d->buf[1] + 2;    /* sync + len + counted bytes */
+        if (d->buf[1] >= 2 && total <= CRSF_MAX_FRAME_SIZE) {
+            if (d->n < total) {
+                return 0;                            /* wait for the rest */
+            }
+            if (crsf_parse(d->buf, total, NULL, NULL) >= 0) {
+                *frame = d->buf;
+                *len   = total;
+                d->done = (uint8_t)total;
+                return 1;
+            }
+        }
+        /* bad length or CRC: drop one byte, re-sync on the next 0xC8 in the buffer */
+        unsigned i = 1;
+        while (i < d->n && d->buf[i] != CRSF_SYNC_RX) {
+            i++;
+        }
+        d->n -= i;
+        memmove(d->buf, d->buf + i, d->n);
+    }
 }
