@@ -29,7 +29,6 @@ env/
 ENV/
 env.bak/
 venv.bak/
-.venv/
 
 # Conda
 .conda/
@@ -150,3 +149,6 @@ qds_cache/
 docs/PHOTOGRAMMETRY_ROADMAP.md
 app/Kestrel/src/README.md
 tools/odm-comparison/README.md
+
+# Claude Code
+.claude/settings.local.json

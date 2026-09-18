@@ -53,16 +53,32 @@ extern "C" {
 void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
-
+void link_tx_notify_tick_from_isr(void);   /* freertos.c */
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define MCO_Pin GPIO_PIN_0
-#define MCO_GPIO_Port GPIOH
+#define AUX1_SW_Pin GPIO_PIN_2
+#define AUX1_SW_GPIO_Port GPIOC
 #define LED_STATUS_Pin GPIO_PIN_0
 #define LED_STATUS_GPIO_Port GPIOB
+#define AUX2_SW_Pin GPIO_PIN_1
+#define AUX2_SW_GPIO_Port GPIOB
+#define SW_FLIGHT_MODE1_Pin GPIO_PIN_2
+#define SW_FLIGHT_MODE1_GPIO_Port GPIOB
+#define SW_FLIGHT_MODE2_Pin GPIO_PIN_10
+#define SW_FLIGHT_MODE2_GPIO_Port GPIOB
+#define AUX3_SW1_Pin GPIO_PIN_11
+#define AUX3_SW1_GPIO_Port GPIOB
+#define AUX3_SW2_Pin GPIO_PIN_12
+#define AUX3_SW2_GPIO_Port GPIOB
 #define LED_WARN_Pin GPIO_PIN_14
 #define LED_WARN_GPIO_Port GPIOB
+#define SW_ARM_Pin GPIO_PIN_14
+#define SW_ARM_GPIO_Port GPIOD
+#define SW_EMERGENCY_KILL_Pin GPIO_PIN_8
+#define SW_EMERGENCY_KILL_GPIO_Port GPIOC
+#define BTN_LEFT_Pin GPIO_PIN_9
+#define BTN_LEFT_GPIO_Port GPIOC
 #define USB_DM_Pin GPIO_PIN_11
 #define USB_DM_GPIO_Port GPIOA
 #define USB_DP_Pin GPIO_PIN_12
@@ -71,10 +87,24 @@ void Error_Handler(void);
 #define TMS_GPIO_Port GPIOA
 #define TCK_Pin GPIO_PIN_14
 #define TCK_GPIO_Port GPIOA
+#define BTN_RIGHT_Pin GPIO_PIN_10
+#define BTN_RIGHT_GPIO_Port GPIOC
+#define WS2812_DIN_Pin GPIO_PIN_0
+#define WS2812_DIN_GPIO_Port GPIOD
+#define BUZZER_Pin GPIO_PIN_1
+#define BUZZER_GPIO_Port GPIOD
 #define SWO_Pin GPIO_PIN_3
 #define SWO_GPIO_Port GPIOB
+#define BTN1_Pin GPIO_PIN_4
+#define BTN1_GPIO_Port GPIOB
+#define BTN2_Pin GPIO_PIN_5
+#define BTN2_GPIO_Port GPIOB
 #define LED_LINK_Pin GPIO_PIN_7
 #define LED_LINK_GPIO_Port GPIOB
+#define BTN3_Pin GPIO_PIN_8
+#define BTN3_GPIO_Port GPIOB
+#define BTN4_Pin GPIO_PIN_9
+#define BTN4_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 

@@ -29,7 +29,6 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "link_tx.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -108,8 +107,9 @@ int main(void)
   MX_USART6_UART_Init();
   MX_TIM2_Init();
   MX_IWDG_Init();
+  MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
-
+  __HAL_DBGMCU_FREEZE_IWDG();   /* disables watchdog timeout while debugging */
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -140,10 +140,6 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
-
-  /** Configure LSE Drive Capability
-  */
-  HAL_PWR_EnableBkUpAccess();
 
   /** Configure the main internal regulator output voltage
   */
@@ -243,7 +239,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   /* USER CODE BEGIN Callback 1 */
   else if (htim->Instance == TIM2)
   {
-    /* RC_RATE_HZ cadence - see link_tx.c. */
     link_tx_notify_tick_from_isr();
   }
   /* USER CODE END Callback 1 */
