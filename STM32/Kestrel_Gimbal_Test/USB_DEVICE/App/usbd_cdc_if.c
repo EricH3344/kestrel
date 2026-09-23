@@ -27,7 +27,7 @@
 #include "cmsis_os.h"
 #include <string.h>
 
-extern StreamBufferHandle_t gcsRxStreamBuffer;
+extern StreamBufferHandle_t usbRxStreamBuffer;
 /* USER CODE END INCLUDE */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -268,7 +268,7 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 {
   /* USER CODE BEGIN 6 */
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-  xStreamBufferSendFromISR(gcsRxStreamBuffer, Buf, *Len, &xHigherPriorityTaskWoken);
+  xStreamBufferSendFromISR(usbRxStreamBuffer, Buf, *Len, &xHigherPriorityTaskWoken);
   USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
   USBD_CDC_ReceivePacket(&hUsbDeviceFS);
   portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
