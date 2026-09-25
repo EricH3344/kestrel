@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QDateTime>
 #include <QStringList>
+#include <QVariantMap>
 
 struct ProjectData
 {
@@ -25,6 +26,8 @@ public:
     
     Q_INVOKABLE ProjectData loadProject(const QString &kprojFilePath);
     Q_INVOKABLE bool isValidProjectFile(const QString &filePath);
+    Q_INVOKABLE QVariantMap openProject(const QString &kprojFilePath);
+    Q_INVOKABLE QVariantMap mapMetadata(const QString &projectPath);
 
 signals:
     void projectLoaded(const QString &projectName);

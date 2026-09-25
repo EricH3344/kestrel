@@ -1,4 +1,5 @@
 #include "photogrammetry/mvs/DenseReconstruction.h"
+#include "photogrammetry/mvs/DensePointCloudBackend.h"
 #include "photogrammetry/mvs/DensePointCloudFilter.h"
 #include "photogrammetry/mvs/DepthMapFusion.h"
 #include "photogrammetry/camera/RigCameraModel.h"
@@ -14,6 +15,8 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include <QCoreApplication>
+
 #include <algorithm>
 #include <chrono>
 #include <cctype>
@@ -26,6 +29,7 @@
 #include <map>
 #include <numeric>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -924,11 +928,13 @@ void writeDiagnostics(const fs::path &outputDirectory,
 
 int main(int argc, char **argv)
 {
-    if (argc < 3 || argc > 8) {
+    QCoreApplication application(argc, argv);
+    if (argc < 3 || argc > 9) {
         std::cerr << "Usage: KestrelDenseReconstructionRealSmoke "
                      "<project-root> <output-directory> [first-capture-index] "
                      "[capture-count] [maximum-image-dimension] "
-                     "[tile-size-pixels] [orthophoto-gsd-metres]\n";
+                     "[tile-size-pixels] [orthophoto-gsd-metres] "
+                     "[plane-sweep|openmvs|prefer-openmvs]\n";
         return 2;
     }
     const fs::path projectRoot = argv[1];
@@ -938,6 +944,7 @@ int main(int argc, char **argv)
     int maximumImageDimension = 480;
     int tileSizePixels = 192;
     double orthophotoGroundSampleDistanceMetres = 0.10;
+    std::string backendName = "plane-sweep";
     try {
         firstCapture = argc >= 4 ? std::stoi(argv[3]) : firstCapture;
         captureCount = argc >= 5 ? std::stoi(argv[4]) : captureCount;
@@ -947,6 +954,7 @@ int main(int argc, char **argv)
             ? std::stoi(argv[6]) : tileSizePixels;
         orthophotoGroundSampleDistanceMetres = argc >= 8
             ? std::stod(argv[7]) : orthophotoGroundSampleDistanceMetres;
+        backendName = argc >= 9 ? argv[8] : backendName;
     } catch (const std::exception &) {
         std::cerr << "Capture indices, counts, dimensions, tile size, and orthophoto GSD are invalid.\n";
         return 2;
@@ -954,7 +962,9 @@ int main(int argc, char **argv)
     if (firstCapture < 0 || captureCount < 2
         || maximumImageDimension < 32 || tileSizePixels < 16
         || !std::isfinite(orthophotoGroundSampleDistanceMetres)
-        || orthophotoGroundSampleDistanceMetres <= 0.0) {
+        || orthophotoGroundSampleDistanceMetres <= 0.0
+        || (backendName != "plane-sweep" && backendName != "openmvs"
+            && backendName != "prefer-openmvs")) {
         std::cerr << "Invalid capture range, maximum image dimension, tile size, or orthophoto GSD.\n";
         return 2;
     }
@@ -992,29 +1002,65 @@ int main(int argc, char **argv)
               << ", maximum dimension=" << maximumImageDimension
               << ", tile core=" << tileSizePixels << ".\n";
 
-    const kestrel::PlaneSweepMvsBackend backend;
-    const auto denseStart = std::chrono::steady_clock::now();
-    const kestrel::DenseReconstructionResult result = backend.reconstruct(
-        input, options);
-    const double denseReconstructionSeconds =
-        std::chrono::duration<double>(
-            std::chrono::steady_clock::now() - denseStart).count();
     kestrel::DepthMapFusionOptions fusionOptions;
     fusionOptions.voxelSizeMetres = 0.10;
     fusionOptions.minimumObservations = 2;
     fusionOptions.minimumInputConfidence = 0.01f;
-    const kestrel::DepthMapFusionResult fusion = result.success
-        ? kestrel::DepthMapFusion::fuseStreaming(
-              input.views, result.depthMaps.size(),
-              [&result, &options](size_t index,
-                                  kestrel::DenseDepthMap *map,
-                                  std::string *errorMessage) {
-                  return kestrel::PlaneSweepMvsBackend::
-                      loadConsistentDepthMap(
-                          result.depthMaps, index, options, map,
-                          errorMessage);
-              }, fusionOptions)
-        : kestrel::DepthMapFusionResult{};
+    kestrel::DenseReconstructionResult result;
+    kestrel::DepthMapFusionResult fusion;
+    const auto denseStart = std::chrono::steady_clock::now();
+    if (backendName == "plane-sweep") {
+        const kestrel::PlaneSweepMvsBackend backend;
+        result = backend.reconstruct(input, options);
+        fusion = result.success
+            ? kestrel::DepthMapFusion::fuseStreaming(
+                  input.views, result.depthMaps.size(),
+                  [&result, &options](size_t index,
+                                      kestrel::DenseDepthMap *map,
+                                      std::string *errorMessage) {
+                      return kestrel::PlaneSweepMvsBackend::
+                          loadConsistentDepthMap(
+                              result.depthMaps, index, options, map,
+                              errorMessage);
+                  }, fusionOptions)
+            : kestrel::DepthMapFusionResult{};
+    } else {
+        kestrel::DensePointCloudReconstructionOptions pointCloudOptions;
+        pointCloudOptions.planeSweep = options;
+        pointCloudOptions.planeSweepFusion = fusionOptions;
+        pointCloudOptions.workspaceDirectory =
+            (outputDirectory / "openmvs").string();
+        pointCloudOptions.openMvsMaximumResolution = maximumImageDimension;
+        pointCloudOptions.openMvsMinimumResolution = std::min(
+            320, maximumImageDimension);
+        pointCloudOptions.allowPlaneSweepFallback =
+            backendName == "prefer-openmvs";
+        const kestrel::DensePointCloudBackendKind backendKind =
+            backendName == "openmvs"
+                ? kestrel::DensePointCloudBackendKind::OpenMvs
+                : kestrel::DensePointCloudBackendKind::PreferOpenMvs;
+        kestrel::DensePointCloudReconstructionResult pointCloud =
+            kestrel::DensePointCloudReconstructor::reconstruct(
+                input, backendKind, pointCloudOptions);
+        result.success = pointCloud.success;
+        result.message = pointCloud.backendName + ": " + pointCloud.message;
+        fusion.success = pointCloud.success;
+        fusion.message = pointCloud.success
+            ? "Dense point cloud supplied by " + pointCloud.backendName + "."
+            : pointCloud.message;
+        fusion.validInputSampleCount = pointCloud.points.size();
+        fusion.candidateVoxelCount = pointCloud.points.size();
+        fusion.points = std::move(pointCloud.points);
+        if (!pointCloud.processLog.empty()) {
+            fs::create_directories(outputDirectory);
+            std::ofstream log(outputDirectory / "openmvs-process.log",
+                              std::ios::trunc);
+            log << pointCloud.processLog;
+        }
+    }
+    const double denseReconstructionSeconds =
+        std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - denseStart).count();
     kestrel::DensePointCloudFilterOptions filterOptions;
     filterOptions.minimumConfidence = 0.01f;
     filterOptions.spatialSearchRadiusMetres = 0.35;

@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Shapes
 import QtQuick.Layouts
+import QtQuick.Controls
 
 Column {
     id: viewHeader
@@ -426,6 +427,20 @@ Column {
                 source: Qt.resolvedUrl("assets/image_5.png")
                 anchors.horizontalCenter: parent.horizontalCenter
             }
+            MouseArea {
+                x: 200
+                y: 0
+                width: Math.max(0, parent.width - 338)
+                height: 32
+                onPressed: if (viewHeader.appWindow) viewHeader.appWindow.startSystemMove()
+            }
+            Rectangle {
+                x: 0
+                y: 0
+                width: 44
+                height: 32
+                color: fileMouseArea.containsMouse || fileMenu.visible ? "#e0e0e8" : "transparent"
+            }
             Text {
                 id: chromeMinimize_1
 
@@ -445,6 +460,30 @@ Column {
                 text: "File"
                 textFormat: Text.PlainText
                 verticalAlignment: Text.AlignVCenter
+            }
+            MouseArea {
+                id: fileMouseArea
+                x: 0
+                y: 0
+                width: 44
+                height: 32
+                hoverEnabled: true
+                onClicked: fileMenu.open()
+            }
+            Menu {
+                id: fileMenu
+                x: 0
+                y: 32
+                width: 190
+
+                MenuItem {
+                    text: "Create Project"
+                    onTriggered: if (viewHeader.appWindow) viewHeader.appWindow.openCreateProjectDialog()
+                }
+                MenuItem {
+                    text: "Open Project"
+                    onTriggered: if (viewHeader.appWindow) viewHeader.appWindow.openExistingProject()
+                }
             }
             Text {
                 id: chromeMinimize_2

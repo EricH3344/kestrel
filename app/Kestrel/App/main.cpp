@@ -7,6 +7,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QTimer>
+#include <QTextStream>
 #include "windowcontroller.h"
 #include "application/SystemAlert.h"
 #include "application/CreateProjectController.h"
@@ -14,7 +15,7 @@
 #include "application/FileDialogHelper.h"
 #include "project/ProjectCreator.h"
 #include "project/ProjectLoader.h"
-#include "photogrammetry/mosaic/StitchingController.h"
+#include "processing/StitchingController.h"
 
 #include "autogen/environment.h"
 
@@ -24,31 +25,36 @@ int main(int argc, char *argv[])
 
     // Allow an existing project to be reprocessed without opening the UI.
     // This is also useful for diagnosing large field flights from a terminal.
-    if (argc == 3 && QString::fromLocal8Bit(argv[1]) == "--stitch-project") {
+    const QString command = argc > 1 ? QString::fromLocal8Bit(argv[1]) : QString();
+    if (argc == 3 && (command == "--stitch-project" || command == "--refresh-preview")) {
         QCoreApplication app(argc, argv);
         StitchingController stitchingController;
         QObject::connect(&stitchingController,
                          &StitchingController::stitchingStatusChanged,
-                         [](const QString &message) { qInfo().noquote() << message; });
+                         [](const QString &message) { QTextStream(stdout) << message << Qt::endl; });
         QObject::connect(&stitchingController,
                          &StitchingController::stitchingCompleted,
                          &app,
                          [&app](const QString &, const QUrl &previewUrl) {
-                             qInfo().noquote() << "Mosaic written to"
-                                               << previewUrl.toLocalFile();
+                             QTextStream(stdout) << "ODM preview written to "
+                                                 << previewUrl.toLocalFile() << Qt::endl;
                              app.exit(0);
                          });
         QObject::connect(&stitchingController,
                          &StitchingController::stitchingFailed,
                          &app,
                          [&app](const QString &, const QString &errorMessage) {
-                             qCritical().noquote() << errorMessage;
+                             QTextStream(stderr) << errorMessage << Qt::endl;
                              app.exit(2);
                          });
         const QString projectPath = QString::fromLocal8Bit(argv[2]);
         QTimer::singleShot(0, &stitchingController,
-                           [&stitchingController, projectPath] {
-                               stitchingController.stitchProject(projectPath);
+                           [&stitchingController, projectPath, command] {
+                               if (command == "--refresh-preview") {
+                                   stitchingController.refreshPreview(projectPath);
+                               } else {
+                                   stitchingController.stitchProject(projectPath);
+                               }
                            });
         return app.exec();
     }

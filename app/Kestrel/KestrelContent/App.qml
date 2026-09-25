@@ -17,6 +17,7 @@ Window {
     property string pendingProjectName: ""
     property var projectCreationProgressWindow: null
     property string activeMosaicUrl: ""
+    property var activeMapMetadata: ({})
     property bool isStitching: false
     property string stitchingStatus: "Create a project to generate a field mosaic."
 
@@ -26,6 +27,13 @@ Window {
         var updatedProjects = openProjects.slice()
         for (var i = 0; i < updatedProjects.length; ++i) {
             updatedProjects[i].isActive = false
+            if (updatedProjects[i].projectPath === projectPath) {
+                updatedProjects[i].isActive = true
+                openProjects = updatedProjects
+                activeMosaicUrl = updatedProjects[i].mosaicUrl
+                activeMapMetadata = updatedProjects[i].mapMetadata
+                return
+            }
         }
 
         var newProject = Qt.createQmlObject(
@@ -33,10 +41,60 @@ Window {
                     + 'property string projectName: ' + JSON.stringify(projectName)
                     + '; property string projectPath: ' + JSON.stringify(projectPath)
                     + '; property string mosaicUrl: ""'
+                    + '; property var mapMetadata: ({})'
                     + '; property bool isActive: true }',
                     appWindow)
         updatedProjects.push(newProject)
         openProjects = updatedProjects
+        activeMapMetadata = ({})
+    }
+
+    function openExistingProject() {
+        const filePath = fileDialogHelper.selectProjectFile()
+        if (!filePath)
+            return
+        const project = projectLoader.openProject(filePath)
+        if (!project.projectPath)
+            return
+
+        addProject(project.projectName, project.projectPath)
+        setProjectMapMetadata(project.projectPath, projectLoader.mapMetadata(project.projectPath))
+        showMap()
+        if (project.hasOrthophoto) {
+            activeMosaicUrl = ""
+            stitchingStatus = "Refreshing mosaic preview from ODM's GeoTIFF..."
+            stitchingController.refreshPreview(project.projectPath)
+        } else {
+            activeMosaicUrl = project.previewUrl
+            setProjectMosaic(project.projectPath, project.previewUrl)
+            stitchingStatus = project.previewUrl
+                    ? "Field mosaic ready."
+                    : "Project opened. No ODM mosaic is available yet."
+        }
+    }
+
+    Dialog {
+        id: projectOpenErrorDialog
+        anchors.centerIn: parent
+        title: "Cannot open project"
+        modal: true
+        standardButtons: Dialog.Ok
+        property string errorMessage: ""
+
+        contentItem: Text {
+            text: projectOpenErrorDialog.errorMessage
+            width: 320
+            wrapMode: Text.WordWrap
+            color: "#303030"
+        }
+    }
+
+    Connections {
+        target: projectLoader
+        function onProjectLoadFailed(errorMessage) {
+            projectOpenErrorDialog.errorMessage = errorMessage
+            projectOpenErrorDialog.open()
+        }
     }
 
     function setProjectMosaic(projectPath, mosaicUrl) {
@@ -51,6 +109,17 @@ Window {
         }
     }
 
+    function setProjectMapMetadata(projectPath, metadata) {
+        for (var i = 0; i < openProjects.length; ++i) {
+            if (openProjects[i].projectPath === projectPath) {
+                openProjects[i].mapMetadata = metadata
+                if (openProjects[i].isActive)
+                    activeMapMetadata = metadata
+                return
+            }
+        }
+    }
+
     function showProjectCreationProgress(projectName) {
         pendingProjectName = projectName
         if (projectCreationProgressWindow === null) {
@@ -60,7 +129,10 @@ Window {
         projectCreationProgressWindow.projectName = projectName
         projectCreationProgressWindow.currentFile = 0
         projectCreationProgressWindow.totalFiles = 0
+        projectCreationProgressWindow.percent = 0
+        projectCreationProgressWindow.waitingForOdm = false
         projectCreationProgressWindow.statusMessage = "Preparing project..."
+        projectCreationProgressWindow.detailMessage = "Setting up project folders..."
         projectCreationProgressWindow.show()
         projectCreationProgressWindow.raise()
         projectCreationProgressWindow.requestActivate()
@@ -73,7 +145,7 @@ Window {
             id: progressWindow
             width: 420
             height: 180
-            title: "Creating Project"
+            title: "Preparing Field Mosaic"
             flags: Qt.Dialog | Qt.FramelessWindowHint
             modality: Qt.ApplicationModal
             visible: false
@@ -81,7 +153,10 @@ Window {
             property string projectName: ""
             property int currentFile: 0
             property int totalFiles: 0
+            property real percent: 0
+            property bool waitingForOdm: false
             property string statusMessage: "Preparing project..."
+            property string detailMessage: "Setting up project folders..."
 
             Rectangle {
                 anchors.fill: parent
@@ -95,7 +170,7 @@ Window {
                     spacing: 14
 
                     Text {
-                        text: "Creating " + progressWindow.projectName
+                        text: "Preparing " + progressWindow.projectName
                         color: "#1e1e1e"
                         font.family: "Inter"
                         font.pixelSize: 18
@@ -104,6 +179,8 @@ Window {
 
                     Text {
                         text: progressWindow.statusMessage
+                        width: parent.width
+                        elide: Text.ElideRight
                         color: "#5c5c5c"
                         font.family: "Inter"
                         font.pixelSize: 14
@@ -112,14 +189,13 @@ Window {
                     ProgressBar {
                         width: parent.width
                         from: 0
-                        to: Math.max(1, progressWindow.totalFiles)
-                        value: progressWindow.currentFile
+                        to: 100
+                        value: progressWindow.percent
+                        indeterminate: progressWindow.waitingForOdm
                     }
 
                     Text {
-                        text: progressWindow.totalFiles > 0
-                              ? progressWindow.currentFile + " of " + progressWindow.totalFiles + " TIFF files imported"
-                              : "Setting up project folders..."
+                        text: progressWindow.detailMessage
                         color: "#5c5c5c"
                         font.family: "Inter"
                         font.pixelSize: 12
@@ -136,16 +212,16 @@ Window {
             if (projectCreationProgressWindow) {
                 projectCreationProgressWindow.currentFile = currentFile
                 projectCreationProgressWindow.totalFiles = totalFiles
+                projectCreationProgressWindow.percent = totalFiles > 0
+                        ? 10 * currentFile / totalFiles : 0
                 projectCreationProgressWindow.statusMessage = "Importing TIFF files..."
+                projectCreationProgressWindow.detailMessage = currentFile + " of " + totalFiles + " TIFF files imported"
             }
         }
 
         function onProjectCreationCompleted(projectPath) {
             addProject(pendingProjectName, projectPath)
             pendingProjectName = ""
-            if (projectCreationProgressWindow) {
-                projectCreationProgressWindow.close()
-            }
             stitchingController.stitchProject(projectPath)
         }
 
@@ -164,33 +240,55 @@ Window {
         function onStitchingStarted(projectPath) {
             isStitching = true
             activeMosaicUrl = ""
-            stitchingStatus = "Preparing imported TIFF files for stitching..."
+            activeMapMetadata = ({})
+            stitchingStatus = "Preparing imported TIFF files for ODM..."
+            if (projectCreationProgressWindow) {
+                projectCreationProgressWindow.percent = Math.max(10, projectCreationProgressWindow.percent)
+                projectCreationProgressWindow.waitingForOdm = true
+                projectCreationProgressWindow.statusMessage = stitchingStatus
+                projectCreationProgressWindow.detailMessage = "Waiting for ODM progress..."
+            }
         }
 
         function onStitchingStatusChanged(message) {
             stitchingStatus = message
+            if (projectCreationProgressWindow) {
+                projectCreationProgressWindow.statusMessage = message
+                if (message.indexOf("exporting the Map preview") !== -1) {
+                    projectCreationProgressWindow.waitingForOdm = false
+                    projectCreationProgressWindow.percent = 95
+                    projectCreationProgressWindow.detailMessage = "Exporting Map preview..."
+                }
+            }
+        }
+
+        function onStitchingProgressChanged(percent) {
+            if (projectCreationProgressWindow) {
+                projectCreationProgressWindow.waitingForOdm = false
+                projectCreationProgressWindow.percent = Math.max(
+                            projectCreationProgressWindow.percent, 10 + 0.85 * percent)
+                projectCreationProgressWindow.detailMessage = "ODM processing: " + Math.round(percent) + "%"
+            }
         }
 
         function onStitchingCompleted(projectPath, previewUrl) {
             isStitching = false
             stitchingStatus = "Field mosaic ready."
             setProjectMosaic(projectPath, previewUrl)
+            setProjectMapMetadata(projectPath, projectLoader.mapMetadata(projectPath))
+            if (projectCreationProgressWindow) {
+                projectCreationProgressWindow.percent = 100
+                projectCreationProgressWindow.close()
+            }
         }
 
         function onStitchingFailed(projectPath, errorMessage) {
             isStitching = false
             stitchingStatus = errorMessage
-            console.error("Stitching failed:", errorMessage)
-        }
-    }
-
-    // Window dragging support
-    DragHandler {
-        target: null
-        onActiveChanged: {
-            if (active) {
-                appWindow.startSystemMove()
+            if (projectCreationProgressWindow) {
+                projectCreationProgressWindow.close()
             }
+            console.error("Stitching failed:", errorMessage)
         }
     }
 

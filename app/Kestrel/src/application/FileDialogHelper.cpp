@@ -3,6 +3,7 @@
 #include <QDirIterator>
 #include <QFileInfo>
 #include <QQmlEngine>
+#include <QStandardPaths>
 
 FileDialogHelper::FileDialogHelper(QObject *parent)
     : QObject(parent)
@@ -81,4 +82,14 @@ QStringList FileDialogHelper::selectTiffFilesFromFolder(const QString &startPath
     }
 
     return tiffFiles;
+}
+
+QString FileDialogHelper::selectProjectFile(const QString &startPath)
+{
+    const QString initialPath = startPath.isEmpty()
+        ? QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)
+              + "/Kestrel Projects"
+        : startPath;
+    return QFileDialog::getOpenFileName(nullptr, "Open Kestrel Project",
+                                        initialPath, "Kestrel Projects (*.kproj)");
 }

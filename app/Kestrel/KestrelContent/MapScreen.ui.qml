@@ -9,6 +9,69 @@ Rectangle {
     clip: true
     color: "#ffffff"
     property var applicationModel: parent ? parent.applicationModel : null
+    property real zoomFactor: 1
+    property real panX: 0
+    property real panY: 0
+    property real pointerX: -1
+    property real pointerY: -1
+    readonly property var georef: applicationModel ? applicationModel.activeMapMetadata : ({})
+    readonly property string coordinateDisplay: coordinateAt(pointerX, pointerY)
+    readonly property string scaleDisplay: groundScale()
+    readonly property string crsDisplay: georef.crs || "—"
+
+    function fitImage() {
+        zoomFactor = 1
+        panX = 0
+        panY = 0
+    }
+
+    function clampPan(value, imageExtent, viewportExtent) {
+        if (imageExtent <= viewportExtent)
+            return 0
+        const limit = (imageExtent - viewportExtent) / 2
+        return Math.max(-limit, Math.min(limit, value))
+    }
+
+    function zoomAt(factor, x, y) {
+        if (mosaicPreview.status !== Image.Ready || mosaicPreview.width <= 0)
+            return
+        const nextZoom = Math.max(1, Math.min(16, zoomFactor * factor))
+        if (nextZoom === zoomFactor)
+            return
+        if (nextZoom === 1) {
+            fitImage()
+            return
+        }
+        const ratio = nextZoom / zoomFactor
+        const newWidth = mosaicPreview.width * ratio
+        const newHeight = mosaicPreview.height * ratio
+        const newX = x - (x - mosaicPreview.x) * ratio
+        const newY = y - (y - mosaicPreview.y) * ratio
+        zoomFactor = nextZoom
+        panX = clampPan(newX - (viewport.width - newWidth) / 2, newWidth, viewport.width)
+        panY = clampPan(newY - (viewport.height - newHeight) / 2, newHeight, viewport.height)
+    }
+
+    function coordinateAt(x, y) {
+        if (!georef.width || mosaicPreview.width <= 0 || x < 0 || y < 0)
+            return "—"
+        const px = (x - mosaicPreview.x) * georef.width / mosaicPreview.width
+        const py = (y - mosaicPreview.y) * georef.height / mosaicPreview.height
+        if (px < 0 || py < 0 || px > georef.width || py > georef.height)
+            return "—"
+        const east = georef.originX + px * georef.pixelWidth + py * georef.rotationX
+        const north = georef.originY + px * georef.rotationY + py * georef.pixelHeight
+        const decimals = georef.unit === "deg" ? 6 : 2
+        return east.toFixed(decimals) + ", " + north.toFixed(decimals)
+    }
+
+    function groundScale() {
+        if (!georef.width || mosaicPreview.width <= 0)
+            return "—"
+        const unitsPerPixel = Math.hypot(georef.pixelWidth, georef.rotationY)
+                              * georef.width / mosaicPreview.width
+        return unitsPerPixel.toPrecision(3) + " " + (georef.unit || "units") + "/px"
+    }
 
     Rectangle {
         id: rightSide
@@ -278,14 +341,62 @@ Senescence Rate:"
         clip: true
         color: "#f2f2f7"
 
-        Image {
-            id: mosaicPreview
+        Item {
+            id: viewport
             anchors.fill: parent
             anchors.margins: 12
-            source: map.applicationModel ? map.applicationModel.activeMosaicUrl : ""
-            fillMode: Image.PreserveAspectFit
-            asynchronous: true
-            visible: source !== ""
+            clip: true
+
+            Image {
+                id: mosaicPreview
+                readonly property real fitScale: implicitWidth > 0 && implicitHeight > 0
+                    ? Math.min(viewport.width / implicitWidth, viewport.height / implicitHeight) : 0
+                width: implicitWidth * fitScale * map.zoomFactor
+                height: implicitHeight * fitScale * map.zoomFactor
+                x: (viewport.width - width) / 2 + map.panX
+                y: (viewport.height - height) / 2 + map.panY
+                source: map.applicationModel ? map.applicationModel.activeMosaicUrl : ""
+                fillMode: Image.Stretch
+                asynchronous: true
+                cache: false
+                smooth: true
+                visible: source !== ""
+                onStatusChanged: if (status === Image.Ready) map.fitImage()
+            }
+
+            MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                acceptedButtons: Qt.LeftButton
+                cursorShape: map.zoomFactor > 1 ? Qt.OpenHandCursor : Qt.ArrowCursor
+                property real lastX: 0
+                property real lastY: 0
+                onPressed: function(mouse) {
+                    lastX = mouse.x
+                    lastY = mouse.y
+                }
+                onPositionChanged: function(mouse) {
+                    if (pressed) {
+                        map.panX = map.clampPan(map.panX + mouse.x - lastX,
+                                                mosaicPreview.width, viewport.width)
+                        map.panY = map.clampPan(map.panY + mouse.y - lastY,
+                                                mosaicPreview.height, viewport.height)
+                    }
+                    lastX = mouse.x
+                    lastY = mouse.y
+                    map.pointerX = mouse.x
+                    map.pointerY = mouse.y
+                }
+                onExited: {
+                    map.pointerX = -1
+                    map.pointerY = -1
+                }
+                onWheel: function(wheel) {
+                    map.zoomAt(Math.pow(1.25, wheel.angleDelta.y / 120), wheel.x, wheel.y)
+                    wheel.accepted = true
+                }
+                onDoubleClicked: function(mouse) { map.zoomAt(1.5, mouse.x, mouse.y) }
+            }
         }
 
         Text {
@@ -951,6 +1062,11 @@ Senescence Rate:"
                         }
                     }
                 }
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: map.zoomAt(1.25, viewport.width / 2, viewport.height / 2)
+                }
             }
             Item {
                 id: zoom_out
@@ -1012,6 +1128,11 @@ Senescence Rate:"
                         }
                     }
                 }
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: map.zoomAt(0.8, viewport.width / 2, viewport.height / 2)
+                }
             }
             Item {
                 id: fit_screen
@@ -1072,6 +1193,11 @@ Senescence Rate:"
                             path: "M 15 0 L 18 0 C 19.100000023841858 0 20 0.8999999761581421 20 2 L 20 4 L 18 4 L 18 2 L 15 2 L 15 0 Z M 2 4 L 2 2 L 5 2 L 5 0 L 2 0 C 0.8999999761581421 0 0 0.8999999761581421 0 2 L 0 4 L 2 4 Z M 18 12 L 18 14 L 15 14 L 15 16 L 18 16 C 19.100000023841858 16 20 15.100000023841858 20 14 L 20 12 L 18 12 Z M 5 14 L 2 14 L 2 12 L 0 12 L 0 14 C 0 15.100000023841858 0.8999999761581421 16 2 16 L 5 16 L 5 14 Z M 16 4 L 4 4 L 4 12 L 16 12 L 16 4 Z"
                         }
                     }
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: map.fitImage()
                 }
             }
             Item {
@@ -1284,11 +1410,11 @@ Senescence Rate:"
             id: fields
 
             anchors.right: parent.right
-            anchors.rightMargin: 30
+            anchors.rightMargin: 12
             anchors.verticalCenter: parent.verticalCenter
 
             height: 35
-            width: 630
+            width: 690
 
             Item {
                 id: textbox
@@ -1297,7 +1423,7 @@ Senescence Rate:"
                 y: 4
 
                 height: 28
-                width: 124
+                width: 225
 
                 Text {
                     id: label_1
@@ -1322,7 +1448,7 @@ Senescence Rate:"
                     id: textbox_1
 
                     height: 30
-                    width: 124
+                    width: 225
 
                     border.color: "#a6a6a6"
                     border.width: 1
@@ -1336,17 +1462,17 @@ Senescence Rate:"
                         y: 8
 
                         height: 14
-                        width: 109
+                        width: 209
 
-                        color: "#a6a6a6"
+                        color: "#303030"
                         font.family: "Roboto"
                         font.pixelSize: 12
                         font.weight: Font.Normal
                         horizontalAlignment: Text.AlignLeft
-                        text: "Text field data"
+                        text: map.coordinateDisplay
                         textFormat: Text.PlainText
                         verticalAlignment: Text.AlignTop
-                        visible: false
+                        visible: true
                         wrapMode: Text.WordWrap
                     }
                 }
@@ -1373,11 +1499,11 @@ Senescence Rate:"
             Item {
                 id: textbox_2
 
-                x: 298
+                x: 375
                 y: 4
 
                 height: 28
-                width: 124
+                width: 130
 
                 Text {
                     id: label_2
@@ -1402,7 +1528,7 @@ Senescence Rate:"
                     id: textbox_3
 
                     height: 30
-                    width: 124
+                    width: 130
 
                     border.color: "#a6a6a6"
                     border.width: 1
@@ -1416,17 +1542,17 @@ Senescence Rate:"
                         y: 8
 
                         height: 14
-                        width: 109
+                        width: 114
 
-                        color: "#a6a6a6"
+                        color: "#303030"
                         font.family: "Roboto"
                         font.pixelSize: 12
                         font.weight: Font.Normal
                         horizontalAlignment: Text.AlignLeft
-                        text: "Text field data"
+                        text: map.scaleDisplay
                         textFormat: Text.PlainText
                         verticalAlignment: Text.AlignTop
-                        visible: false
+                        visible: true
                         wrapMode: Text.WordWrap
                     }
                 }
@@ -1434,7 +1560,7 @@ Senescence Rate:"
             Text {
                 id: image_5
 
-                x: 247
+                x: 325
                 y: 1
 
                 height: 33
@@ -1454,11 +1580,11 @@ Senescence Rate:"
             Item {
                 id: textbox_4
 
-                x: 506
+                x: 565
                 y: 3
 
                 height: 28
-                width: 124
+                width: 125
 
                 Text {
                     id: label_3
@@ -1483,7 +1609,7 @@ Senescence Rate:"
                     id: textbox_5
 
                     height: 30
-                    width: 124
+                    width: 125
 
                     border.color: "#a6a6a6"
                     border.width: 1
@@ -1499,15 +1625,15 @@ Senescence Rate:"
                         height: 14
                         width: 109
 
-                        color: "#a6a6a6"
+                        color: "#303030"
                         font.family: "Roboto"
                         font.pixelSize: 12
                         font.weight: Font.Normal
                         horizontalAlignment: Text.AlignLeft
-                        text: "Text field data"
+                        text: map.crsDisplay
                         textFormat: Text.PlainText
                         verticalAlignment: Text.AlignTop
-                        visible: false
+                        visible: true
                         wrapMode: Text.WordWrap
                     }
                 }
@@ -1515,7 +1641,7 @@ Senescence Rate:"
             Text {
                 id: image_6
 
-                x: 455
+                x: 515
 
                 height: 33
                 width: 46
@@ -1527,7 +1653,7 @@ Senescence Rate:"
                 horizontalAlignment: Text.AlignHCenter
                 lineHeight: 22.40
                 lineHeightMode: Text.FixedHeight
-                text: "Plot #"
+                text: "CRS"
                 textFormat: Text.PlainText
                 verticalAlignment: Text.AlignVCenter
             }

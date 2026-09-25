@@ -32,6 +32,7 @@
 #include <numeric>
 #include <queue>
 #include <set>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -40,12 +41,18 @@ namespace {
 constexpr int kMatchDimension = 1400;
 constexpr int kSpatialNeighbours = 10;
 constexpr int kSequenceFallbackNeighbours = 2;
-constexpr int kMinimumInliers = 20;
+constexpr int kMinimumDescriptorMatches = 20;
+constexpr int kMinimumGeometricInliers = 20;
 constexpr int kBundleMatchesPerPair = 300;
 constexpr int kTrackMatchesPerPair = 500;
 constexpr int kBundleMaximumIterations = 8;
 constexpr double kBundleHuberThreshold = 5.0;
 constexpr double kRatioTest = 0.74;
+constexpr double kAkazeRatioTest = 0.85;
+constexpr int kAkazeFeatureIndexOffset = 1000000;
+constexpr int kMaximumAkazeFeatures = 12000;
+constexpr double kOrbRatioTest = 0.85;
+constexpr int kOrbFeatureIndexOffset = 2000000;
 constexpr qint64 kMaximumCanvasPixels = 50000000;
 
 struct Capture
@@ -70,6 +77,10 @@ struct Capture
     cv::Mat matchImage;
     std::vector<cv::KeyPoint> keypoints;
     cv::Mat descriptors;
+    std::vector<cv::KeyPoint> akazeKeypoints;
+    cv::Mat akazeDescriptors;
+    std::vector<cv::KeyPoint> orbKeypoints;
+    cv::Mat orbDescriptors;
 };
 
 struct CandidatePair
@@ -121,6 +132,31 @@ struct PairTransform
     std::vector<cv::Point2f> firstInlierPoints;
     std::vector<cv::Point2f> secondInlierPoints;
     std::vector<kestrel::PairwiseFeatureMatch> featureMatches;
+};
+
+struct PairEstimationDiagnostics
+{
+    int emptyDescriptors = 0;
+    int tooFewDescriptorMatches = 0;
+    int fundamentalEstimationFailures = 0;
+    int tooFewFundamentalInliers = 0;
+    int homographyEstimationFailures = 0;
+    int tooFewHomographyInliers = 0;
+    int invalidHomographies = 0;
+    int acceptedPairs = 0;
+};
+
+struct PairMatchAudit
+{
+    int firstImage = -1;
+    int secondImage = -1;
+    int tentativeMatches = 0;
+    int siftTentativeMatches = 0;
+    int akazeTentativeMatches = 0;
+    int orbTentativeMatches = 0;
+    int homographyInliers = 0;
+    int fundamentalInliers = 0;
+    QString outcome;
 };
 
 struct BundleAdjustmentSummary
@@ -400,16 +436,70 @@ std::vector<Capture> discoverCaptures(const QString &rawImagesPath,
     return captures;
 }
 
-bool estimatePair(const Capture &first, const Capture &second, PairTransform *result)
+void retainStrongestFeatures(std::vector<cv::KeyPoint> *keypoints,
+                             cv::Mat *descriptors, int maximumCount)
 {
-    if (first.descriptors.empty() || second.descriptors.empty()) {
+    if (!keypoints || !descriptors || maximumCount <= 0
+        || keypoints->size() <= static_cast<size_t>(maximumCount)) {
+        return;
+    }
+    std::vector<int> indices(keypoints->size());
+    std::iota(indices.begin(), indices.end(), 0);
+    std::partial_sort(
+        indices.begin(), indices.begin() + maximumCount, indices.end(),
+        [keypoints](int left, int right) {
+            return (*keypoints)[left].response > (*keypoints)[right].response;
+        });
+    std::vector<cv::KeyPoint> retainedKeypoints;
+    retainedKeypoints.reserve(maximumCount);
+    cv::Mat retainedDescriptors(maximumCount, descriptors->cols,
+                                descriptors->type());
+    for (int outputIndex = 0; outputIndex < maximumCount; ++outputIndex) {
+        const int sourceIndex = indices[outputIndex];
+        retainedKeypoints.push_back((*keypoints)[sourceIndex]);
+        descriptors->row(sourceIndex).copyTo(
+            retainedDescriptors.row(outputIndex));
+    }
+    *keypoints = std::move(retainedKeypoints);
+    *descriptors = std::move(retainedDescriptors);
+}
+
+bool estimatePair(const Capture &first, const Capture &second,
+                  PairTransform *result, PairEstimationDiagnostics *diagnostics,
+                  PairMatchAudit *audit)
+{
+    audit->firstImage = result->first;
+    audit->secondImage = result->second;
+    // Binary descriptors substantially improve registration in repetitive
+    // crop canopy, but evaluating them for every candidate pair is expensive
+    // and increases the chance of an accidental repetitive-texture match.
+    // Restrict the fallback to captures that are genuinely close in the
+    // flight trajectory. SIFT remains available for every candidate pair.
+    const double gpsX = second.gpsEnu.x - first.gpsEnu.x;
+    const double gpsY = second.gpsEnu.y - first.gpsEnu.y;
+    const bool closeForBinaryFallback = first.hasGps && second.hasGps
+        ? gpsX * gpsX + gpsY * gpsY <= 25.0
+        : std::abs(result->first - result->second) <= 2;
+    const bool hasSift = !first.descriptors.empty()
+                         && !second.descriptors.empty();
+    const bool hasAkaze = closeForBinaryFallback
+                          && !first.akazeDescriptors.empty()
+                          && !second.akazeDescriptors.empty();
+    const bool hasOrb = closeForBinaryFallback
+                        && !first.orbDescriptors.empty()
+                        && !second.orbDescriptors.empty();
+    if (!hasSift && !hasAkaze && !hasOrb) {
+        ++diagnostics->emptyDescriptors;
+        audit->outcome = "descriptor-empty";
         return false;
     }
-    cv::FlannBasedMatcher matcher(
-        cv::makePtr<cv::flann::KDTreeIndexParams>(5),
-        cv::makePtr<cv::flann::SearchParams>(64));
     std::vector<std::vector<cv::DMatch>> neighbours;
-    matcher.knnMatch(first.descriptors, second.descriptors, neighbours, 2);
+    if (hasSift) {
+        cv::FlannBasedMatcher matcher(
+            cv::makePtr<cv::flann::KDTreeIndexParams>(5),
+            cv::makePtr<cv::flann::SearchParams>(64));
+        matcher.knnMatch(first.descriptors, second.descriptors, neighbours, 2);
+    }
 
     std::vector<cv::DMatch> goodMatches;
     goodMatches.reserve(neighbours.size());
@@ -439,7 +529,165 @@ bool estimatePair(const Capture &first, const Capture &second, PairTransform *re
             secondFeatureIndices.push_back(match.trainIdx);
         }
     }
-    if (firstPoints.size() < static_cast<size_t>(kMinimumInliers)) {
+    audit->siftTentativeMatches = static_cast<int>(firstPoints.size());
+
+    if (hasAkaze) {
+        cv::FlannBasedMatcher akazeMatcher(
+            cv::makePtr<cv::flann::LshIndexParams>(20, 12, 2),
+            cv::makePtr<cv::flann::SearchParams>(64));
+        std::vector<std::vector<cv::DMatch>> akazeNeighbours;
+        akazeMatcher.knnMatch(first.akazeDescriptors,
+                              second.akazeDescriptors,
+                              akazeNeighbours, 2);
+        std::vector<cv::DMatch> akazeMatches;
+        for (const auto &pair : akazeNeighbours) {
+            if (pair.size() == 2
+                && pair[0].distance < kAkazeRatioTest * pair[1].distance) {
+                akazeMatches.push_back(pair[0]);
+            }
+        }
+        std::sort(akazeMatches.begin(), akazeMatches.end(),
+                  [](const cv::DMatch &left, const cv::DMatch &right) {
+                      return left.distance < right.distance;
+                  });
+        std::set<int> usedAkazeSecondFeatures;
+        for (const cv::DMatch &match : akazeMatches) {
+            if (usedAkazeSecondFeatures.insert(match.trainIdx).second) {
+                firstPoints.push_back(
+                    first.akazeKeypoints[match.queryIdx].pt);
+                secondPoints.push_back(
+                    second.akazeKeypoints[match.trainIdx].pt);
+                firstFeatureIndices.push_back(
+                    kAkazeFeatureIndexOffset + match.queryIdx);
+                secondFeatureIndices.push_back(
+                    kAkazeFeatureIndexOffset + match.trainIdx);
+            }
+        }
+    }
+    audit->akazeTentativeMatches = static_cast<int>(firstPoints.size())
+                                   - audit->siftTentativeMatches;
+
+    const int beforeOrbMatches = static_cast<int>(firstPoints.size());
+    if (hasOrb) {
+        cv::FlannBasedMatcher orbMatcher(
+            cv::makePtr<cv::flann::LshIndexParams>(20, 12, 2),
+            cv::makePtr<cv::flann::SearchParams>(64));
+        std::vector<std::vector<cv::DMatch>> orbNeighbours;
+        orbMatcher.knnMatch(first.orbDescriptors, second.orbDescriptors,
+                            orbNeighbours, 2);
+        std::vector<cv::DMatch> orbMatches;
+        for (const auto &pair : orbNeighbours) {
+            if (pair.size() == 2
+                && pair[0].distance < kOrbRatioTest * pair[1].distance) {
+                orbMatches.push_back(pair[0]);
+            }
+        }
+        std::sort(orbMatches.begin(), orbMatches.end(),
+                  [](const cv::DMatch &left, const cv::DMatch &right) {
+                      return left.distance < right.distance;
+                  });
+        std::set<int> usedOrbSecondFeatures;
+        for (const cv::DMatch &match : orbMatches) {
+            if (usedOrbSecondFeatures.insert(match.trainIdx).second) {
+                firstPoints.push_back(first.orbKeypoints[match.queryIdx].pt);
+                secondPoints.push_back(second.orbKeypoints[match.trainIdx].pt);
+                firstFeatureIndices.push_back(
+                    kOrbFeatureIndexOffset + match.queryIdx);
+                secondFeatureIndices.push_back(
+                    kOrbFeatureIndexOffset + match.trainIdx);
+            }
+        }
+    }
+    audit->orbTentativeMatches = static_cast<int>(firstPoints.size())
+                                 - beforeOrbMatches;
+
+    struct FeatureRange {
+        int offset = 0;
+        int count = 0;
+        int homographyInliers = 0;
+        int fundamentalInliers = 0;
+    };
+    std::vector<FeatureRange> ranges{
+        {0, audit->siftTentativeMatches, 0, 0},
+        {audit->siftTentativeMatches, audit->akazeTentativeMatches, 0, 0},
+        {beforeOrbMatches, audit->orbTentativeMatches, 0, 0}};
+    FeatureRange bestRange;
+    int bestGeometricScore = -1;
+    for (FeatureRange &range : ranges) {
+        if (range.count < kMinimumDescriptorMatches) {
+            continue;
+        }
+        const auto firstBegin = firstPoints.begin() + range.offset;
+        const auto secondBegin = secondPoints.begin() + range.offset;
+        const std::vector<cv::Point2f> rangeFirst(
+            firstBegin, firstBegin + range.count);
+        const std::vector<cv::Point2f> rangeSecond(
+            secondBegin, secondBegin + range.count);
+        cv::Mat rangeMask;
+        const cv::Mat rangeHomography = cv::findHomography(
+            rangeFirst, rangeSecond, cv::RANSAC, 3.0, rangeMask, 3000, 0.995);
+        range.homographyInliers = rangeHomography.empty()
+            ? 0 : cv::countNonZero(rangeMask);
+        cv::Mat rangeFundamentalMask;
+        const cv::Mat rangeFundamental = cv::findFundamentalMat(
+            rangeFirst, rangeSecond, cv::FM_RANSAC, 1.5, 0.999,
+            rangeFundamentalMask);
+        range.fundamentalInliers = rangeFundamental.rows == 3
+                && rangeFundamental.cols == 3
+                && cv::checkRange(rangeFundamental)
+            ? cv::countNonZero(rangeFundamentalMask) : 0;
+        const int geometricScore = std::min(range.homographyInliers,
+                                            range.fundamentalInliers);
+        if (geometricScore > bestGeometricScore) {
+            bestGeometricScore = geometricScore;
+            bestRange = range;
+        }
+    }
+    if (bestRange.count > 0) {
+        const auto retainRange = [&bestRange](auto *values) {
+            using Value = typename std::decay_t<decltype(*values)>::value_type;
+            std::vector<Value> retained(
+                values->begin() + bestRange.offset,
+                values->begin() + bestRange.offset + bestRange.count);
+            *values = std::move(retained);
+        };
+        retainRange(&firstPoints);
+        retainRange(&secondPoints);
+        retainRange(&firstFeatureIndices);
+        retainRange(&secondFeatureIndices);
+    } else {
+        firstPoints.clear();
+        secondPoints.clear();
+        firstFeatureIndices.clear();
+        secondFeatureIndices.clear();
+    }
+    if (firstPoints.size() < static_cast<size_t>(kMinimumDescriptorMatches)) {
+        ++diagnostics->tooFewDescriptorMatches;
+        audit->tentativeMatches = static_cast<int>(firstPoints.size());
+        audit->outcome = "descriptor-short";
+        return false;
+    }
+    audit->tentativeMatches = static_cast<int>(firstPoints.size());
+
+    cv::Mat inlierMask;
+    cv::Mat homography = cv::findHomography(firstPoints, secondPoints, cv::RANSAC, 3.0,
+                                            inlierMask, 3000, 0.995);
+    if (homography.empty()) {
+        ++diagnostics->homographyEstimationFailures;
+        audit->outcome = "homography-fit";
+        return false;
+    }
+    const int inliers = cv::countNonZero(inlierMask);
+    audit->homographyInliers = inliers;
+    if (inliers < kMinimumGeometricInliers) {
+        ++diagnostics->tooFewHomographyInliers;
+        audit->outcome = "homography-inlier";
+        return false;
+    }
+    homography /= homography.at<double>(2, 2);
+    if (!cv::checkRange(homography)) {
+        ++diagnostics->invalidHomographies;
+        audit->outcome = "invalid-homography";
         return false;
     }
 
@@ -447,27 +695,20 @@ bool estimatePair(const Capture &first, const Capture &second, PairTransform *re
     cv::Mat fundamental = cv::findFundamentalMat(
         firstPoints, secondPoints, cv::FM_RANSAC, 1.5, 0.999,
         fundamentalMask);
-    if (fundamental.rows != 3 || fundamental.cols != 3
-        || !cv::checkRange(fundamental)) {
+    const bool validFundamental = fundamental.rows == 3
+                                  && fundamental.cols == 3
+                                  && cv::checkRange(fundamental);
+    const int fundamentalInliers = validFundamental
+        ? cv::countNonZero(fundamentalMask) : 0;
+    audit->fundamentalInliers = fundamentalInliers;
+    if (!validFundamental) {
+        ++diagnostics->fundamentalEstimationFailures;
+        audit->outcome = "fundamental-fit";
         return false;
     }
-    const int fundamentalInliers = cv::countNonZero(fundamentalMask);
-    if (fundamentalInliers < kMinimumInliers) {
-        return false;
-    }
-
-    cv::Mat inlierMask;
-    cv::Mat homography = cv::findHomography(firstPoints, secondPoints, cv::RANSAC, 3.0,
-                                            inlierMask, 3000, 0.995);
-    if (homography.empty()) {
-        return false;
-    }
-    const int inliers = cv::countNonZero(inlierMask);
-    if (inliers < kMinimumInliers) {
-        return false;
-    }
-    homography /= homography.at<double>(2, 2);
-    if (!cv::checkRange(homography)) {
+    if (fundamentalInliers < kMinimumGeometricInliers) {
+        ++diagnostics->tooFewFundamentalInliers;
+        audit->outcome = "fundamental-inlier";
         return false;
     }
     result->inliers = inliers;
@@ -481,23 +722,25 @@ bool estimatePair(const Capture &first, const Capture &second, PairTransform *re
         second.matchScale, 0.0, 0.0,
         0.0, second.matchScale, 0.0,
         0.0, 0.0, 1.0);
-    result->fundamental = secondToMatching.t() * fundamental
-                          * firstToMatching;
+    if (validFundamental) {
+        result->fundamental = secondToMatching.t() * fundamental
+                              * firstToMatching;
+    }
 
-    std::vector<int> fundamentalIndices;
-    fundamentalIndices.reserve(fundamentalInliers);
+    std::vector<int> trackIndices;
+    trackIndices.reserve(fundamentalInliers);
     for (int index = 0; index < static_cast<int>(firstPoints.size()); ++index) {
         if (fundamentalMask.at<uchar>(index)) {
-            fundamentalIndices.push_back(index);
+            trackIndices.push_back(index);
         }
     }
     const size_t trackMatchCount = std::min(
-        fundamentalIndices.size(), static_cast<size_t>(kTrackMatchesPerPair));
+        trackIndices.size(), static_cast<size_t>(kTrackMatchesPerPair));
     result->featureMatches.reserve(trackMatchCount);
     for (size_t retained = 0; retained < trackMatchCount; ++retained) {
-        const size_t sampled = retained * fundamentalIndices.size()
+        const size_t sampled = retained * trackIndices.size()
                                / trackMatchCount;
-        const int index = fundamentalIndices[sampled];
+        const int index = trackIndices[sampled];
         result->featureMatches.push_back({
             {result->first, firstFeatureIndices[index],
              firstPoints[index] * (1.0 / first.matchScale)},
@@ -522,7 +765,57 @@ bool estimatePair(const Capture &first, const Capture &second, PairTransform *re
         result->firstInlierPoints.push_back(firstPoints[index]);
         result->secondInlierPoints.push_back(secondPoints[index]);
     }
+    ++diagnostics->acceptedPairs;
+    audit->outcome = "accepted";
     return true;
+}
+
+QString csvField(QString value)
+{
+    value.replace('"', "\"\"");
+    return '"' + value + '"';
+}
+
+bool writePairMatchAudit(const QString &projectPath,
+                         const std::vector<Capture> &captures,
+                         const std::vector<PairMatchAudit> &audits)
+{
+    const QString diagnosticsDirectory = QDir(projectPath).filePath(
+        "processed_images/kestrel_diagnostics");
+    if (!QDir().mkpath(diagnosticsDirectory)) {
+        return false;
+    }
+    QSaveFile file(QDir(diagnosticsDirectory).filePath("pair_matches.csv"));
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        return false;
+    }
+    QByteArray contents(
+        "first_index,first_capture,second_index,second_capture,"
+        "tentative_matches,sift_tentative_matches,akaze_tentative_matches,"
+        "orb_tentative_matches,"
+        "homography_inliers,fundamental_inliers,outcome\n");
+    for (const PairMatchAudit &audit : audits) {
+        const QString firstName = audit.firstImage >= 0
+                && audit.firstImage < static_cast<int>(captures.size())
+            ? captures[audit.firstImage].name : QString();
+        const QString secondName = audit.secondImage >= 0
+                && audit.secondImage < static_cast<int>(captures.size())
+            ? captures[audit.secondImage].name : QString();
+        contents += QString("%1,%2,%3,%4,%5,%6,%7,%8,%9,%10,%11\n")
+                        .arg(audit.firstImage)
+                        .arg(csvField(firstName))
+                        .arg(audit.secondImage)
+                        .arg(csvField(secondName))
+                        .arg(audit.tentativeMatches)
+                        .arg(audit.siftTentativeMatches)
+                        .arg(audit.akazeTentativeMatches)
+                        .arg(audit.orbTentativeMatches)
+                        .arg(audit.homographyInliers)
+                        .arg(audit.fundamentalInliers)
+                        .arg(csvField(audit.outcome))
+                        .toUtf8();
+    }
+    return file.write(contents) == contents.size() && file.commit();
 }
 
 bool solveGlobalTransforms(int captureCount, const std::vector<PairTransform> &pairs,
@@ -1032,6 +1325,10 @@ StitchingController::MosaicResult StitchingController::buildMosaic(const QString
     }
 
     const cv::Ptr<cv::SIFT> featureDetector = cv::SIFT::create(4000);
+    const cv::Ptr<cv::AKAZE> akazeDetector = cv::AKAZE::create(
+        cv::AKAZE::DESCRIPTOR_MLDB, 0, 3, 0.0005f);
+    const cv::Ptr<cv::ORB> orbDetector = cv::ORB::create(
+        6000, 1.2f, 8, 31, 0, 2, cv::ORB::HARRIS_SCORE, 31, 10);
     for (size_t i = 0; i < captures.size(); ++i) {
         postStatus(QString("Preparing capture %1 of %2...").arg(i + 1).arg(captures.size()));
         QString loadError;
@@ -1052,6 +1349,15 @@ StitchingController::MosaicResult StitchingController::buildMosaic(const QString
         featureDetector->detectAndCompute(captures[i].matchImage, cv::noArray(),
                                           captures[i].keypoints,
                                           captures[i].descriptors);
+        akazeDetector->detectAndCompute(captures[i].matchImage, cv::noArray(),
+                                        captures[i].akazeKeypoints,
+                                        captures[i].akazeDescriptors);
+        retainStrongestFeatures(&captures[i].akazeKeypoints,
+                                &captures[i].akazeDescriptors,
+                                kMaximumAkazeFeatures);
+        orbDetector->detectAndCompute(captures[i].matchImage, cv::noArray(),
+                                      captures[i].orbKeypoints,
+                                      captures[i].orbDescriptors);
     }
 
     const std::vector<CandidatePair> candidates = candidatePairs(captures);
@@ -1061,6 +1367,9 @@ StitchingController::MosaicResult StitchingController::buildMosaic(const QString
                    .arg(altitudeCaptureCount));
     std::vector<PairTransform> pairTransforms;
     pairTransforms.reserve(candidates.size());
+    PairEstimationDiagnostics pairDiagnostics;
+    std::vector<PairMatchAudit> pairAudits;
+    pairAudits.reserve(candidates.size());
     for (size_t index = 0; index < candidates.size(); ++index) {
         if (index == 0 || (index + 1) % 10 == 0 || index + 1 == candidates.size()) {
             postStatus(QString("Matching likely overlap %1 of %2...")
@@ -1069,9 +1378,31 @@ StitchingController::MosaicResult StitchingController::buildMosaic(const QString
         PairTransform pair;
         pair.first = candidates[index].first;
         pair.second = candidates[index].second;
-        if (estimatePair(captures[pair.first], captures[pair.second], &pair)) {
+        PairMatchAudit audit;
+        if (estimatePair(captures[pair.first], captures[pair.second], &pair,
+                         &pairDiagnostics, &audit)) {
             pairTransforms.push_back(std::move(pair));
         }
+        pairAudits.push_back(std::move(audit));
+    }
+    postStatus(QString("Pair matching accepted %1 of %2 candidates; rejected: "
+                       "%3 descriptor-empty, %4 descriptor-short, "
+                       "%5 fundamental-fit, %6 fundamental-inlier, "
+                       "%7 homography-fit, %8 homography-inlier, "
+                       "%9 invalid homography.")
+                   .arg(pairDiagnostics.acceptedPairs).arg(candidates.size())
+                   .arg(pairDiagnostics.emptyDescriptors)
+                   .arg(pairDiagnostics.tooFewDescriptorMatches)
+                   .arg(pairDiagnostics.fundamentalEstimationFailures)
+                   .arg(pairDiagnostics.tooFewFundamentalInliers)
+                   .arg(pairDiagnostics.homographyEstimationFailures)
+                   .arg(pairDiagnostics.tooFewHomographyInliers)
+                   .arg(pairDiagnostics.invalidHomographies));
+    if (writePairMatchAudit(projectPath, captures, pairAudits)) {
+        postStatus("Wrote per-pair overlap diagnostics to "
+                   "processed_images/kestrel_diagnostics/pair_matches.csv.");
+    } else {
+        postStatus("Warning: could not write the per-pair overlap diagnostics.");
     }
 
     std::vector<kestrel::PairwiseFeatureMatch> allFeatureMatches;
@@ -1081,8 +1412,8 @@ StitchingController::MosaicResult StitchingController::buildMosaic(const QString
                                  pair.featureMatches.end());
     }
     const kestrel::FeatureTrackBuildResult featureTracks =
-        kestrel::FeatureTrackBuilder::build(allFeatureMatches, 3);
-    postStatus(QString("Built %1 persistent multi-view tracks from %2 "
+        kestrel::FeatureTrackBuilder::build(allFeatureMatches, 2);
+    postStatus(QString("Built %1 persistent feature tracks from %2 "
                        "geometrically verified pair matches (%3 conflicts rejected).")
                    .arg(featureTracks.tracks.size())
                    .arg(allFeatureMatches.size())
@@ -1159,15 +1490,23 @@ StitchingController::MosaicResult StitchingController::buildMosaic(const QString
         }
     }
     if (sparseInitialization.success) {
+        QStringList placedCaptureNames;
+        for (const kestrel::SparseCameraPose &camera : sparseInitialization.cameras) {
+            if (camera.imageIndex >= 0
+                && camera.imageIndex < static_cast<int>(captures.size())) {
+                placedCaptureNames.push_back(captures[camera.imageIndex].name);
+            }
+        }
         postStatus(QString("Sparse reconstruction placed %1 of %2 captures in %3 "
                            "component(s) and triangulated %4 points from seed "
-                           "captures %5 and %6.")
+                           "captures %5 and %6. Placed captures: %7.")
                        .arg(sparseInitialization.cameras.size())
                        .arg(captures.size())
                        .arg(sparseInitialization.componentCount)
                        .arg(sparseInitialization.points.size())
                        .arg(sparseInitialization.firstImageIndex + 1)
-                       .arg(sparseInitialization.secondImageIndex + 1));
+                       .arg(sparseInitialization.secondImageIndex + 1)
+                       .arg(placedCaptureNames.join(", ")));
         for (const kestrel::BundleAdjustmentComponentSummary &summary
              : sparseBundleAdjustment.components) {
             if (summary.success) {
