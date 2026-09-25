@@ -17,6 +17,11 @@ Window {
     property string pendingProjectName: ""
     property var projectCreationProgressWindow: null
     property string activeMosaicUrl: ""
+    property string activeProjectPath: ""
+    property string activeProjectFile: ""
+    property string activeFlightPath: ""
+    property var activeFlights: []
+    property string activeFlightId: ""
     property var activeMapMetadata: ({})
     property bool isStitching: false
     property string stitchingStatus: "Create a project to generate a field mosaic."
@@ -31,6 +36,7 @@ Window {
                 updatedProjects[i].isActive = true
                 openProjects = updatedProjects
                 activeMosaicUrl = updatedProjects[i].mosaicUrl
+                activeProjectPath = projectPath
                 activeMapMetadata = updatedProjects[i].mapMetadata
                 return
             }
@@ -46,6 +52,7 @@ Window {
                     appWindow)
         updatedProjects.push(newProject)
         openProjects = updatedProjects
+        activeProjectPath = projectPath
         activeMapMetadata = ({})
     }
 
@@ -58,19 +65,51 @@ Window {
             return
 
         addProject(project.projectName, project.projectPath)
-        setProjectMapMetadata(project.projectPath, projectLoader.mapMetadata(project.projectPath))
+        activeProjectFile = project.projectFile
+        activeFlights = project.flights
         showMap()
-        if (project.hasOrthophoto) {
-            activeMosaicUrl = ""
+        if (activeFlights.length > 0)
+            selectFlight(activeFlights[0], true)
+    }
+
+    function selectFlight(flight, refreshPreview) {
+        activeFlightId = flight.id
+        activeFlightPath = flight.flightPath
+        activeMosaicUrl = flight.previewUrl || ""
+        activeMapMetadata = projectLoader.mapMetadata(flight.flightPath)
+        setProjectMosaic(activeProjectPath, activeMosaicUrl)
+        setProjectMapMetadata(activeProjectPath, activeMapMetadata)
+        stitchingStatus = activeMosaicUrl ? "Field mosaic ready."
+                                          : "This flight has no ODM mosaic yet."
+        if (flight.hasOrthophoto && (refreshPreview || !activeMosaicUrl) && !isStitching) {
             stitchingStatus = "Refreshing mosaic preview from ODM's GeoTIFF..."
-            stitchingController.refreshPreview(project.projectPath)
-        } else {
-            activeMosaicUrl = project.previewUrl
-            setProjectMosaic(project.projectPath, project.previewUrl)
-            stitchingStatus = project.previewUrl
-                    ? "Field mosaic ready."
-                    : "Project opened. No ODM mosaic is available yet."
+            stitchingController.refreshPreview(flight.flightPath)
         }
+    }
+
+    function addFlightFromFolder() {
+        if (!activeProjectFile)
+            return
+        const files = fileDialogHelper.selectTiffFilesFromFolder()
+        if (!files.length)
+            return
+        showProjectCreationProgress("Importing flight")
+        projectCreationProgressWindow.statusMessage = "Copying flight TIFF files..."
+        const added = projectLoader.addFlight(activeProjectFile, files)
+        if (!added.flightPath) {
+            if (projectCreationProgressWindow)
+                projectCreationProgressWindow.close()
+            return
+        }
+        const project = projectLoader.openProject(activeProjectFile)
+        activeFlights = project.flights
+        for (let i = 0; i < activeFlights.length; ++i) {
+            if (activeFlights[i].id === added.flightId) {
+                selectFlight(activeFlights[i], false)
+                break
+            }
+        }
+        stitchingController.stitchProject(added.flightPath)
     }
 
     Dialog {
@@ -221,6 +260,11 @@ Window {
 
         function onProjectCreationCompleted(projectPath) {
             addProject(pendingProjectName, projectPath)
+            activeProjectFile = projectPath + "/" + pendingProjectName + ".kproj"
+            const project = projectLoader.openProject(activeProjectFile)
+            activeFlights = project.flights
+            if (activeFlights.length > 0)
+                selectFlight(activeFlights[0], false)
             pendingProjectName = ""
             stitchingController.stitchProject(projectPath)
         }
@@ -239,8 +283,10 @@ Window {
 
         function onStitchingStarted(projectPath) {
             isStitching = true
-            activeMosaicUrl = ""
-            activeMapMetadata = ({})
+            if (projectPath === activeFlightPath) {
+                activeMosaicUrl = ""
+                activeMapMetadata = ({})
+            }
             stitchingStatus = "Preparing imported TIFF files for ODM..."
             if (projectCreationProgressWindow) {
                 projectCreationProgressWindow.percent = Math.max(10, projectCreationProgressWindow.percent)
@@ -274,8 +320,20 @@ Window {
         function onStitchingCompleted(projectPath, previewUrl) {
             isStitching = false
             stitchingStatus = "Field mosaic ready."
-            setProjectMosaic(projectPath, previewUrl)
-            setProjectMapMetadata(projectPath, projectLoader.mapMetadata(projectPath))
+            const updated = activeFlights.slice()
+            for (let i = 0; i < updated.length; ++i) {
+                if (updated[i].flightPath === projectPath) {
+                    updated[i].previewUrl = previewUrl
+                    updated[i].hasOrthophoto = true
+                }
+            }
+            activeFlights = updated
+            if (projectPath === activeFlightPath) {
+                activeMosaicUrl = previewUrl
+                activeMapMetadata = projectLoader.mapMetadata(projectPath)
+                setProjectMosaic(activeProjectPath, previewUrl)
+                setProjectMapMetadata(activeProjectPath, activeMapMetadata)
+            }
             if (projectCreationProgressWindow) {
                 projectCreationProgressWindow.percent = 100
                 projectCreationProgressWindow.close()

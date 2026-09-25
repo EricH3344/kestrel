@@ -16,6 +16,7 @@
 #include "project/ProjectCreator.h"
 #include "project/ProjectLoader.h"
 #include "processing/StitchingController.h"
+#include "processing/MapDetailRenderer.h"
 
 #include "autogen/environment.h"
 
@@ -85,6 +86,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("projectLoader", new ProjectLoader(&app));
 
     engine.rootContext()->setContextProperty("stitchingController", new StitchingController(&app));
+    engine.rootContext()->setContextProperty("mapDetailRenderer", new MapDetailRenderer(&app));
     
     const QUrl url(mainQmlFile);
     QObject::connect(

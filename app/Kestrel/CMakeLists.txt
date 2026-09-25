@@ -28,6 +28,19 @@ set(QML_IMPORT_PATH ${QT_QML_OUTPUT_DIRECTORY}
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Concurrent Gui Network Widgets Qml Quick QuickTimeline ShaderTools)
 qt_standard_project_setup()
 
+option(KESTREL_BUILD_TESTS "Build Kestrel project-format tests" OFF)
+if (KESTREL_BUILD_TESTS)
+    enable_testing()
+    find_package(Qt6 6.8 REQUIRED COMPONENTS Test)
+    add_executable(ProjectFlightsTest
+        tests/ProjectFlightsTest.cpp
+        src/project/ProjectLoader.h
+        src/project/ProjectLoader.cpp)
+    target_include_directories(ProjectFlightsTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(ProjectFlightsTest PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
+    add_test(NAME ProjectFlightsTest COMMAND ProjectFlightsTest)
+endif()
+
 qt_add_executable(${CMAKE_PROJECT_NAME})
 qt_add_resources(${CMAKE_PROJECT_NAME} "configuration"
     PREFIX "/"

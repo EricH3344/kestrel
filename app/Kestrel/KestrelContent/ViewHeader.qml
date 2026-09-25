@@ -475,13 +475,51 @@ Column {
                 x: 0
                 y: 32
                 width: 190
+                padding: 4
+
+                background: Rectangle {
+                    color: "#f2f2f7"
+                    border.color: "#b3b3b3"
+                    border.width: 1
+                    radius: 6
+                }
 
                 MenuItem {
+                    id: createProjectMenuItem
                     text: "Create Project"
+                    height: 36
+                    padding: 0
+                    background: Rectangle {
+                        color: createProjectMenuItem.highlighted ? "#e0e0e8" : "transparent"
+                        radius: 4
+                    }
+                    contentItem: Text {
+                        text: createProjectMenuItem.text
+                        color: "#303030"
+                        font.family: "Roboto"
+                        font.pixelSize: 12
+                        leftPadding: 12
+                        verticalAlignment: Text.AlignVCenter
+                    }
                     onTriggered: if (viewHeader.appWindow) viewHeader.appWindow.openCreateProjectDialog()
                 }
                 MenuItem {
+                    id: openProjectMenuItem
                     text: "Open Project"
+                    height: 36
+                    padding: 0
+                    background: Rectangle {
+                        color: openProjectMenuItem.highlighted ? "#e0e0e8" : "transparent"
+                        radius: 4
+                    }
+                    contentItem: Text {
+                        text: openProjectMenuItem.text
+                        color: "#303030"
+                        font.family: "Roboto"
+                        font.pixelSize: 12
+                        leftPadding: 12
+                        verticalAlignment: Text.AlignVCenter
+                    }
                     onTriggered: if (viewHeader.appWindow) viewHeader.appWindow.openExistingProject()
                 }
             }

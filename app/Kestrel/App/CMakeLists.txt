@@ -16,6 +16,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ../src/project/ProjectLoader.cpp
     ../src/processing/StitchingController.h
     ../src/processing/StitchingController.cpp
+    ../src/processing/MapDetailRenderer.h
+    ../src/processing/MapDetailRenderer.cpp
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE

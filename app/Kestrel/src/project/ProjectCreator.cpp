@@ -1,4 +1,5 @@
 #include "project/ProjectCreator.h"
+#include "project/ProjectLoader.h"
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -83,43 +84,17 @@ bool ProjectCreator::processImportedFiles(const QString &projectPath, const QStr
 
 bool ProjectCreator::createBinaryProjectFile(const QString &projectPath, const QString &projectName, const QStringList &files)
 {
-    QString kprojPath = projectPath + "/" + projectName + ".kproj";
-    QFile kprojFile(kprojPath);
-    
-    if (!kprojFile.open(QIODevice::WriteOnly)) {
-        return false;
-    }
-    
-    QDataStream stream(&kprojFile);
-    stream.setVersion(QDataStream::Qt_6_0);
-    stream.setByteOrder(QDataStream::LittleEndian);
-    
-    // Magic number to identify file format
-    quint32 magicNumber = 0x4B50524F; // "KPRO" in hex
-    stream << magicNumber;
-    
-    // Format version (binary format v1.0)
-    quint16 majorVersion = 1;
-    quint16 minorVersion = 0;
-    stream << majorVersion << minorVersion;
-    
-    // Project metadata
-    stream << projectName;
-    stream << projectPath;
-    stream << QDateTime::currentDateTime();
-    
-    // Directory structure
-    stream << QString(projectPath + "/raw_images");
-    stream << QString(projectPath + "/processed_images");
-    stream << QString(projectPath + "/output");
-    stream << QString(projectPath + "/metadata");
-    
-    // Imported files list (efficient for thousands of files)
-    stream << (quint32)files.count();
-    for (const QString &file : files) {
-        stream << file;
-    }
-    
-    kprojFile.close();
-    return true;
+    ProjectData data;
+    data.projectName = projectName;
+    data.projectPath = projectPath;
+    data.created = QDateTime::currentDateTime();
+    data.rawImagesPath = projectPath + "/raw_images";
+    data.processedImagesPath = projectPath + "/processed_images";
+    data.outputPath = projectPath + "/output";
+    data.metadataPath = projectPath + "/metadata";
+    data.importedFiles = files;
+    FlightData firstFlight = ProjectLoader::inspectFlight(files);
+    firstFlight.relativePath = ".";
+    data.flights.append(firstFlight);
+    return ProjectLoader::writeProject(projectPath + "/" + projectName + ".kproj", data);
 }

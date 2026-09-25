@@ -14,6 +14,11 @@ Rectangle {
     property real panY: 0
     property real pointerX: -1
     property real pointerY: -1
+    property url detailUrl: ""
+    property real detailLeft: 0
+    property real detailTop: 0
+    property real detailWidth: 0
+    property real detailHeight: 0
     readonly property var georef: applicationModel ? applicationModel.activeMapMetadata : ({})
     readonly property string coordinateDisplay: coordinateAt(pointerX, pointerY)
     readonly property string scaleDisplay: groundScale()
@@ -23,6 +28,61 @@ Rectangle {
         zoomFactor = 1
         panX = 0
         panY = 0
+    }
+
+    function scheduleDetail() {
+        detailTimer.restart()
+    }
+
+    function requestDetail() {
+        if (!applicationModel || !applicationModel.activeFlightPath
+            || mosaicPreview.status !== Image.Ready || mosaicPreview.width <= mosaicPreview.implicitWidth
+            || mosaicPreview.width <= 0 || mosaicPreview.height <= 0) {
+            detailUrl = ""
+            return
+        }
+        const margin = 0.1
+        const left = Math.max(0, -mosaicPreview.x / mosaicPreview.width - margin)
+        const top = Math.max(0, -mosaicPreview.y / mosaicPreview.height - margin)
+        const right = Math.min(1, (viewport.width - mosaicPreview.x) / mosaicPreview.width + margin)
+        const bottom = Math.min(1, (viewport.height - mosaicPreview.y) / mosaicPreview.height + margin)
+        if (right <= left || bottom <= top)
+            return
+        const displayWidth = (right - left) * mosaicPreview.width
+        const displayHeight = (bottom - top) * mosaicPreview.height
+        mapDetailRenderer.request(applicationModel.activeFlightPath, left, top,
+                                  right - left, bottom - top,
+                                  Math.ceil(displayWidth * Screen.devicePixelRatio),
+                                  Math.ceil(displayHeight * Screen.devicePixelRatio))
+    }
+
+    onZoomFactorChanged: scheduleDetail()
+    onPanXChanged: scheduleDetail()
+    onPanYChanged: scheduleDetail()
+    onWidthChanged: scheduleDetail()
+    onHeightChanged: scheduleDetail()
+
+    Timer {
+        id: detailTimer
+        interval: 300
+        repeat: false
+        onTriggered: map.requestDetail()
+    }
+
+    Connections {
+        target: mapDetailRenderer
+        function onDetailReady(projectPath, url, left, top, width, height) {
+            if (!map.applicationModel || projectPath !== map.applicationModel.activeFlightPath)
+                return
+            map.detailLeft = left
+            map.detailTop = top
+            map.detailWidth = width
+            map.detailHeight = height
+            map.detailUrl = url
+        }
+        function onDetailFailed(message) {
+            console.warn("Full-resolution map detail unavailable:", message)
+        }
     }
 
     function clampPan(value, imageExtent, viewportExtent) {
@@ -98,24 +158,11 @@ Rectangle {
 
             clip: true
 
-            Text {
-                id: view_in_Database
-
-                x: 15
-                y: 43
-
-                height: 14
-                width: 113
-
-                color: "#000000"
-                font.family: "Roboto"
-                font.pixelSize: 12
-                font.weight: Font.Normal
-                horizontalAlignment: Text.AlignLeft
-                text: "View in Database"
-                textFormat: Text.PlainText
-                verticalAlignment: Text.AlignTop
+            Rectangle {
+                anchors.fill: parent
+                color: "#ffffff"
             }
+
             Rectangle {
                 id: frame_10
 
@@ -128,23 +175,98 @@ Rectangle {
                 Text {
                     id: plot_Actions
 
-                    x: 104
+                    x: 75
                     y: 7
 
                     height: 22
-                    width: 92
+                    width: 150
 
                     color: "#000000"
                     font.family: "Inter"
                     font.pixelSize: 16
                     font.weight: Font.Normal
-                    horizontalAlignment: Text.AlignLeft
+                    horizontalAlignment: Text.AlignHCenter
                     lineHeight: 22.40
                     lineHeightMode: Text.FixedHeight
-                    text: "Plot Actions"
+                    text: "Field History"
                     textFormat: Text.PlainText
                     verticalAlignment: Text.AlignTop
                     wrapMode: Text.WordWrap
+                }
+                Rectangle {
+                    x: 260
+                    y: 4
+                    width: 28
+                    height: 28
+                    radius: 4
+                    color: addFlightMouse.containsMouse ? "#e0e0e8" : "transparent"
+                    Text {
+                        anchors.centerIn: parent
+                        text: "+"
+                        color: "#303030"
+                        font.pixelSize: 20
+                    }
+                    MouseArea {
+                        id: addFlightMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: if (map.applicationModel) map.applicationModel.addFlightFromFolder()
+                        ToolTip.visible: containsMouse
+                        ToolTip.text: "Add a TIFF flight to this field"
+                    }
+                }
+            }
+            ListView {
+                id: flightHistory
+                anchors.top: frame_10.bottom
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                clip: true
+                model: map.applicationModel ? map.applicationModel.activeFlights : []
+                delegate: Rectangle {
+                    required property var modelData
+                    width: flightHistory.width
+                    height: 40
+                    color: map.applicationModel
+                           && map.applicationModel.activeFlightId === modelData.id
+                           ? "#e0e0e8" : "#ffffff"
+                    Text {
+                        x: 12
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: modelData.date || "Date unknown"
+                        font.family: "Inter"
+                        font.pixelSize: 13
+                        color: "#303030"
+                    }
+                    Text {
+                        anchors.right: parent.right
+                        anchors.rightMargin: 13
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: modelData.compatibility === "different" ? "⚠"
+                              : modelData.compatibility === "unknown" ? "?" : ""
+                        font.family: "Segoe UI Symbol"
+                        font.pixelSize: 20
+                        color: modelData.compatibility === "different" ? "#b45309" : "#777777"
+                    }
+                    Rectangle {
+                        anchors.bottom: parent.bottom
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        height: 1
+                        color: "#b3b3b3"
+                    }
+                    MouseArea {
+                        id: flightMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: if (map.applicationModel) map.applicationModel.selectFlight(modelData, false)
+                        ToolTip.visible: containsMouse && (modelData.compatibility === "different"
+                                                           || modelData.compatibility === "unknown")
+                        ToolTip.text: modelData.compatibility === "different"
+                                      ? "Sensor or band layout differs from the earliest flight"
+                                      : "Sensor/band layout could not be verified"
+                    }
                 }
             }
         }
@@ -362,6 +484,25 @@ Senescence Rate:"
                 smooth: true
                 visible: source !== ""
                 onStatusChanged: if (status === Image.Ready) map.fitImage()
+                onSourceChanged: {
+                    map.detailUrl = ""
+                    map.scheduleDetail()
+                }
+            }
+
+            Image {
+                id: mosaicDetail
+                x: mosaicPreview.x + map.detailLeft * mosaicPreview.width
+                y: mosaicPreview.y + map.detailTop * mosaicPreview.height
+                width: map.detailWidth * mosaicPreview.width
+                height: map.detailHeight * mosaicPreview.height
+                source: map.detailUrl
+                fillMode: Image.Stretch
+                asynchronous: true
+                cache: false
+                smooth: true
+                visible: source !== "" && mosaicPreview.visible
+                         && mosaicPreview.width > mosaicPreview.implicitWidth
             }
 
             MouseArea {
