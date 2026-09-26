@@ -637,7 +637,7 @@ static void link_rx_init(void)
 /* (Re)start the RX ring; also called from the error callback after the HAL stops it */
 static void link_rx_arm(void)
 {
-  s_rx_pos = 0;
+  s_rx_pos = LINK_RX_DMA_BYTES;   /* HAL reports an idle with no new data as Size=512 */
   if (HAL_UARTEx_ReceiveToIdle_DMA(MODULE_UART, s_rx_dma, LINK_RX_DMA_BYTES) != HAL_OK) s_rx_stats.uart_err++;
 }
 
@@ -694,7 +694,8 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
   }
 }
 
-/* RX ring advanced (idle line, half or full): push [s_rx_pos, Size) to the task */
+/* RX ring advanced (idle line, half or full): push [s_rx_pos, Size) to the task.
+ * s_rx_pos = 512 after TC or re-arm: the HAL reports an idle with no new data as Size=512. */
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 {
   if (huart->Instance != MODULE_UART_INST || Size == s_rx_pos) return;
@@ -704,14 +705,17 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
     sent = xStreamBufferSendFromISR(s_rx_stream, &s_rx_dma[s_rx_pos], Size - s_rx_pos, &hpw);
     s_rx_stats.rx_drop += (Size - s_rx_pos) - sent;
   } else {                      /* wrapped: tail of the ring, then the head */
-    sent = xStreamBufferSendFromISR(s_rx_stream, &s_rx_dma[s_rx_pos], LINK_RX_DMA_BYTES - s_rx_pos, &hpw);
-    s_rx_stats.rx_drop += (LINK_RX_DMA_BYTES - s_rx_pos) - sent;
+    size_t tail = LINK_RX_DMA_BYTES - s_rx_pos;
+    if (tail) {
+      sent = xStreamBufferSendFromISR(s_rx_stream, &s_rx_dma[s_rx_pos], tail, &hpw);
+      s_rx_stats.rx_drop += tail - sent;
+    }
     if (Size) {
       sent = xStreamBufferSendFromISR(s_rx_stream, &s_rx_dma[0], Size, &hpw);
       s_rx_stats.rx_drop += Size - sent;
     }
   }
-  s_rx_pos = Size % LINK_RX_DMA_BYTES;
+  s_rx_pos = Size;
   portYIELD_FROM_ISR(hpw);
 }
 
